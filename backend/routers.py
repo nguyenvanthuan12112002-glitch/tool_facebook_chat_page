@@ -1,9 +1,11 @@
+import threading
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status, WebSocket, WebSocketDisconnect, UploadFile, File, Form
 import os
 import shutil
 import time
+from datetime import datetime
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
 from backend.database import get_db
 from backend.config import settings
 from backend.schemas import (
@@ -18,7 +20,8 @@ from backend.schemas import (
     SendReplyInput,
     ReactInput,
     CommentReplyInput,
-    CommentReactInput
+    CommentReactInput,
+    PushSubscriptionInput
 )
 from backend.repositories import AccountRepository, PageRepository, MessageRepository, NotificationRepository
 from backend.services import (
@@ -29,7 +32,7 @@ from backend.services import (
 )
 from backend.websocket import manager
 from backend.queue_worker import event_queue
-from backend.models import Page, Message, Notification
+from backend.models import Page, Message, Notification, PushSubscription
 
 router = APIRouter(prefix="/api/facebook", tags=["Facebook Webhook & Sync"])
 
@@ -91,6 +94,26 @@ async def receive_webhook_event(
         return Response(content="EVENT_RECEIVED", status_code=200)
 
     raise HTTPException(status_code=404, detail="Unknown event subscription object")
+
+
+@router.post("/push/subscribe")
+def subscribe_push(payload: PushSubscriptionInput, db: Session = Depends(get_db)):
+    """API to receive Push Subscription from Frontend"""
+    existing_sub = db.query(PushSubscription).filter(
+        PushSubscription.facebook_user_id == payload.facebook_user_id,
+        PushSubscription.endpoint == payload.endpoint
+    ).first()
+    if not existing_sub:
+        new_sub = PushSubscription(
+            facebook_user_id=payload.facebook_user_id,
+            endpoint=payload.endpoint,
+            p256dh=payload.p256dh,
+            auth=payload.auth
+        )
+        db.add(new_sub)
+        db.commit()
+    return {"success": True, "message": "Subscription stored"}
+
 
 
 @router.post("/send-reply")
@@ -216,7 +239,7 @@ def get_conversations(
                 "last_message": msg.text,
                 "timestamp": msg.timestamp,
                 "direction": msg.direction,
-                "created_at": msg.created_at.isoformat(),
+                "created_at": datetime.fromtimestamp(msg.timestamp / 1000).isoformat(),
                 "is_read": True,
                 "is_replied": True
             }
@@ -227,9 +250,9 @@ def get_conversations(
             if getattr(msg, "is_replied", False) == False:
                 threads[key]["is_replied"] = False
             
-    # Sort threads list by created_at descending
+    # Sort threads list by timestamp descending
     thread_list = list(threads.values())
-    thread_list.sort(key=lambda x: x["created_at"], reverse=True)
+    thread_list.sort(key=lambda x: x["timestamp"], reverse=True)
     return thread_list
 
 
@@ -316,6 +339,10 @@ def sync_by_token(
     sync_service = FacebookSyncService(db)
     try:
         user_id, count, pages = sync_service.sync_by_token(payload.access_token)
+        # Trigger background historical sync for all newly synced pages
+        for p in pages:
+            threading.Thread(target=sync_service.sync_historical_data, args=(p.page_id, user_id), daemon=True).start()
+            
         return SyncByTokenResponse(
             success=True,
             message=f"Đồng bộ thành công {count} trang",
@@ -349,6 +376,10 @@ def sync_pages(
     sync_service = FacebookSyncService(db)
     try:
         count, pages = sync_service.sync_pages(facebook_user_id)
+        # Trigger background historical sync for all newly synced pages
+        for p in pages:
+            threading.Thread(target=sync_service.sync_historical_data, args=(p.page_id, facebook_user_id), daemon=True).start()
+            
         return SyncResponse(
             success=True,
             message=f"Đồng bộ thành công {count} trang",
@@ -404,9 +435,11 @@ async def send_attachment(
     recipient_id: str = Form(...),
     attachment_type: str = Form(...), # "image" or "file"
     file: UploadFile = File(...),
+    is_comment: bool = Form(False),
+    reply_to_message_id: Optional[str] = Form(None),
     db: Session = Depends(get_db)
 ):
-    """Uploads a local file, saves it, and sends it as an attachment to the customer."""
+    """Uploads a local file, saves it, and sends it as an attachment to the customer or comment."""
     # 1. Save file locally to serve in chat history
     filename = f"{int(time.time())}_{file.filename}"
     uploads_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../uploads"))
@@ -415,32 +448,48 @@ async def send_attachment(
     with open(file_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
         
-    local_url = f"http://localhost:8000/uploads/{filename}"
+    local_url = f"/uploads/{filename}"
     
     # 2. Call service to send it via Facebook API
     sync_service = FacebookSyncService(db)
     try:
-        msg = await sync_service.send_page_attachment(
-            page_id=page_id,
-            recipient_id=recipient_id,
-            attachment_type=attachment_type,
-            file_path=file_path,
-            filename=file.filename,
-            local_url=local_url
-        )
-        return {
-            "success": True, 
-            "data": {
-                "id": msg.id,
-                "facebook_message_id": msg.facebook_message_id,
-                "page_id": msg.page_id,
-                "sender_id": msg.sender_id,
-                "text": msg.text,
-                "timestamp": msg.timestamp,
-                "direction": msg.direction,
-                "created_at": msg.created_at.isoformat()
+        if is_comment:
+            res = await sync_service.reply_to_comment_with_attachment(
+                comment_id=recipient_id,
+                page_id=page_id,
+                attachment_type=attachment_type,
+                file_path=file_path,
+                local_url=local_url
+            )
+            return {
+                "success": True, 
+                "data": res
             }
-        }
+        else:
+            msg = await sync_service.send_page_attachment(
+                page_id=page_id,
+                recipient_id=recipient_id,
+                attachment_type=attachment_type,
+                file_path=file_path,
+                filename=file.filename,
+                local_url=local_url,
+                reply_to_message_id=reply_to_message_id
+            )
+            return {
+                "success": True, 
+                "data": {
+                    "id": msg.id,
+                    "facebook_message_id": msg.facebook_message_id,
+                    "page_id": msg.page_id,
+                    "sender_id": msg.sender_id,
+                    "text": msg.text,
+                    "timestamp": msg.timestamp,
+                    "direction": msg.direction,
+                    "reactions": msg.reactions,
+                    "reply_to_message_id": msg.reply_to_message_id,
+                    "created_at": msg.created_at.isoformat()
+                }
+            }
     except Exception as e:
         # cleanup local file if failed
         try:
@@ -456,6 +505,7 @@ async def send_attachment_url(
     recipient_id: str = Form(...),
     attachment_type: str = Form(...), # "image" or "file"
     url: str = Form(...),
+    reply_to_message_id: Optional[str] = Form(None),
     db: Session = Depends(get_db)
 ):
     """Sends an attachment to the customer using a public URL (Stickers, GIFs)."""
@@ -465,7 +515,8 @@ async def send_attachment_url(
             page_id=page_id,
             recipient_id=recipient_id,
             attachment_type=attachment_type,
-            attachment_url=url
+            attachment_url=url,
+            reply_to_message_id=reply_to_message_id
         )
         return {
             "success": True,

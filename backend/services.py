@@ -1,6 +1,9 @@
+import threading
+from dateutil import parser
 import requests
 import asyncio
 from datetime import datetime
+import json
 from sqlalchemy.orm import Session
 from typing import List, Dict, Any, Tuple, Optional
 from backend.config import settings
@@ -220,6 +223,9 @@ class FacebookSyncService:
             "message": {"text": text},
             "messaging_type": "RESPONSE"
         }
+        if reply_to_message_id:
+            payload["reply_to"] = {"mid": reply_to_message_id}
+            
         params = {"access_token": page.page_access_token}
 
         try:
@@ -280,7 +286,7 @@ class FacebookSyncService:
 
 
     async def send_page_attachment(
-        self, page_id: str, recipient_id: str, attachment_type: str, file_path: str, filename: str, local_url: str
+        self, page_id: str, recipient_id: str, attachment_type: str, file_path: str, filename: str, local_url: str, reply_to_message_id: Optional[str] = None
     ) -> Any:
         """
         Sends a binary file attachment (image or file) to a recipient on behalf of a page.
@@ -304,10 +310,14 @@ class FacebookSyncService:
             else:
                 fb_type = "file"
         
+        msg_obj = {"attachment": {"type": fb_type, "payload": {"is_reusable": True}}}
+            
         payload = {
-            "recipient": f'{{"id": "{recipient_id}"}}',
-            "message": f'{{"attachment": {{"type": "{fb_type}", "payload": {{"is_reusable": true}}}}}}'
+            "recipient": json.dumps({"id": recipient_id}),
+            "message": json.dumps(msg_obj)
         }
+        if reply_to_message_id:
+            payload["reply_to"] = json.dumps({"mid": reply_to_message_id})
         
         # Open and send the binary file
         try:
@@ -315,8 +325,19 @@ class FacebookSyncService:
                 mime_type = "application/octet-stream"
                 if fb_type == "image":
                     mime_type = "image/png"
+                    if filename.lower().endswith(".jpg") or filename.lower().endswith(".jpeg"):
+                        mime_type = "image/jpeg"
                 elif fb_type == "audio":
-                    mime_type = "audio/webm"
+                    if filename.lower().endswith(".mp4") or filename.lower().endswith(".m4a"):
+                        mime_type = "audio/mp4"
+                    elif filename.lower().endswith(".aac"):
+                        mime_type = "audio/aac"
+                    elif filename.lower().endswith(".ogg"):
+                        mime_type = "audio/ogg"
+                    elif filename.lower().endswith(".mp3"):
+                        mime_type = "audio/mpeg"
+                    else:
+                        mime_type = "audio/webm"
                 elif fb_type == "video":
                     mime_type = "video/mp4"
                 
@@ -376,7 +397,7 @@ class FacebookSyncService:
 
 
     async def send_page_attachment_url(
-        self, page_id: str, recipient_id: str, attachment_type: str, attachment_url: str
+        self, page_id: str, recipient_id: str, attachment_type: str, attachment_url: str, reply_to_message_id: Optional[str] = None
     ) -> Any:
         """
         Sends an attachment (image/sticker/GIF/file) via a public URL using Facebook Send API.
@@ -400,18 +421,21 @@ class FacebookSyncService:
             else:
                 fb_type = "file"
         
-        payload = {
-            "recipient": {"id": recipient_id},
-            "message": {
-                "attachment": {
-                    "type": fb_type,
-                    "payload": {
-                        "url": attachment_url,
-                        "is_reusable": True
-                    }
+        msg_obj = {
+            "attachment": {
+                "type": fb_type,
+                "payload": {
+                    "url": attachment_url,
+                    "is_reusable": True
                 }
             }
         }
+        payload = {
+            "recipient": {"id": recipient_id},
+            "message": msg_obj
+        }
+        if reply_to_message_id:
+            payload["reply_to"] = {"mid": reply_to_message_id}
 
         try:
             response = await asyncio.to_thread(
@@ -578,6 +602,35 @@ class FacebookSyncService:
         self._handle_api_errors(response_json)
         return response_json
 
+    async def reply_to_comment_with_attachment(self, comment_id: str, page_id: str, attachment_type: str, file_path: str, local_url: str) -> Dict[str, Any]:
+        """
+        Sends an image/file reply to a Page post comment using Page Access Token.
+        POST /{comment_id}/comments
+        """
+        page = self.page_repo.get_by_page_id(page_id)
+        if not page or not page.page_access_token:
+            raise ValueError(f"Page or page access token not found for Page ID {page_id}")
+
+        url = f"https://graph.facebook.com/{settings.FACEBOOK_API_VERSION}/{comment_id}/comments"
+        params = {"access_token": page.page_access_token}
+
+        try:
+            with open(file_path, "rb") as f:
+                # For comments, Facebook allows 'source' parameter for file uploads
+                files = {
+                    "source": f
+                }
+                response = await asyncio.to_thread(
+                    requests.post, url, params=params, files=files, timeout=25
+                )
+                response_json = response.json()
+                print(f"[Reply Comment Attachment] API Response: {response_json}", flush=True)
+        except Exception as e:
+            raise FacebookAPIError(f"Network error replying to comment with attachment: {str(e)}")
+
+        self._handle_api_errors(response_json)
+        return response_json
+
     async def react_to_comment(self, comment_id: str, page_id: str, reaction: str) -> Dict[str, Any]:
         """
         Sends an emoji reaction (LIKE, LOVE, HAHA, WOW, SAD, ANGRY) to a Page post comment.
@@ -670,6 +723,7 @@ class FacebookSyncService:
                     "avatar_url": avatar_url
                 }
                 CUSTOMER_PROFILE_CACHE[psid] = profile_info
+                save_cache(CUSTOMER_PROFILE_CACHE)
                 return profile_info
         except Exception as e:
             print(f"[Customer Profile Error] {str(e)}")
@@ -677,9 +731,161 @@ class FacebookSyncService:
         default_info = {"name": f"Khách hàng {psid[:8]}", "avatar_url": ""}
         return default_info
 
+    def sync_historical_data(self, page_id: str, facebook_user_id: str):
+        """
+        Runs in background to fetch historical conversations and feed for a page.
+        """
+        global CUSTOMER_PROFILE_CACHE
+        try:
+            # Re-create a new DB session for the background thread since sqlalchemy sessions are not thread-safe
+            from backend.database import SessionLocal
+            from backend.repositories import PageRepository, MessageRepository, NotificationRepository
+            
+            db = SessionLocal()
+            try:
+                page_repo = PageRepository(db)
+                message_repo = MessageRepository(db)
+                notif_repo = NotificationRepository(db)
+                
+                page = page_repo.get_by_page_id(page_id)
+                if not page or not page.page_access_token:
+                    return
+                
+                token = page.page_access_token
+                
+                # 1. Fetch Conversations
+                conv_url = f"https://graph.facebook.com/{settings.FACEBOOK_API_VERSION}/{page_id}/conversations"
+                params = {
+                    "fields": "participants{id,name},messages{id,message,created_time,from,to}",
+                    "access_token": token,
+                    "limit": 20
+                }
+                
+                resp = requests.get(conv_url, params=params, timeout=20)
+                if resp.status_code == 200:
+                    conv_data = resp.json().get("data", [])
+                    for conv in conv_data:
+                        # Cache participants
+                        participants = conv.get("participants", {}).get("data", [])
+                        for p in participants:
+                            p_id = p.get("id")
+                            p_name = p.get("name")
+                            if p_id and p_name and p_id != page_id:
+                                CUSTOMER_PROFILE_CACHE[p_id] = {"name": p_name, "avatar_url": ""}
+                                
+                        messages_data = conv.get("messages", {}).get("data", [])
+                        for msg in messages_data:
+                            fb_message_id = msg.get("id")
+                            text = msg.get("message", "")
+                            created_time_str = msg.get("created_time")
+                            from_obj = msg.get("from", {})
+                            to_data = msg.get("to", {}).get("data", [])
+                            
+                            if not fb_message_id or not created_time_str:
+                                continue
+                                
+                            try:
+                                dt = parser.parse(created_time_str)
+                                timestamp = int(dt.timestamp() * 1000)
+                            except:
+                                timestamp = int(datetime.utcnow().timestamp() * 1000)
+                                
+                            direction = "inbound"
+                            sender_name = ""
+                            if from_obj.get("id") == page_id:
+                                direction = "outbound"
+                                sender_id = to_data[0].get("id") if to_data else ""
+                                sender_name = to_data[0].get("name") if to_data else ""
+                            else:
+                                sender_id = from_obj.get("id", "")
+                                sender_name = from_obj.get("name", "")
+                                
+                            if not sender_id:
+                                continue
+                                
+                            if sender_id and sender_name:
+                                CUSTOMER_PROFILE_CACHE[sender_id] = {"name": sender_name, "avatar_url": ""}
+                                
+                            # Check if exists
+                            if not message_repo.get_by_fb_message_id(fb_message_id):
+                                new_msg = __import__('backend.models', fromlist=['Message']).Message(
+                                    facebook_message_id=fb_message_id,
+                                    page_id=page_id,
+                                    sender_id=sender_id,
+                                    text=text,
+                                    timestamp=timestamp,
+                                    direction=direction,
+                                    is_read=True,
+                                    is_replied=True
+                                )
+                                db.add(new_msg)
+                    db.commit()
+                
+                # 2. Fetch Feed/Comments
+                feed_url = f"https://graph.facebook.com/{settings.FACEBOOK_API_VERSION}/{page_id}/feed"
+                feed_params = {
+                    "fields": "comments{id,message,created_time,from}",
+                    "access_token": token,
+                    "limit": 20
+                }
+                resp = requests.get(feed_url, params=feed_params, timeout=20)
+                if resp.status_code == 200:
+                    feed_data = resp.json().get("data", [])
+                    for post in feed_data:
+                        comments_data = post.get("comments", {}).get("data", [])
+                        for comment in comments_data:
+                            c_id = comment.get("id")
+                            c_msg = comment.get("message", "")
+                            c_time = comment.get("created_time")
+                            c_from = comment.get("from", {}).get("name", "Người dùng")
+                            
+                            if not c_id:
+                                continue
+                            
+                            try:
+                                dt = parser.parse(c_time)
+                            except:
+                                dt = datetime.utcnow()
+                                
+                            title = f"{c_from} đã bình luận: {c_msg}"
+                            link = f"https://facebook.com/{c_id}"
+                            
+                            notif_repo.save_historical_notification(
+                                facebook_notification_id=c_id,
+                                page_id=page_id,
+                                title=title,
+                                link=link,
+                                created_time=dt
+                            )
+            finally:
+                db.close()
+                save_cache(CUSTOMER_PROFILE_CACHE)
+        except Exception as e:
+            print(f"[Historical Sync Error] For page {page_id}: {str(e)}")
 
 
-CUSTOMER_PROFILE_CACHE: Dict[str, Dict[str, str]] = {}
+import json
+import os
+
+CACHE_FILE = os.path.join(os.path.dirname(__file__), "customer_profiles_cache.json")
+
+def load_cache():
+    if os.path.exists(CACHE_FILE):
+        try:
+            with open(CACHE_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+def save_cache(cache):
+    try:
+        with open(CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump(cache, f, ensure_ascii=False)
+    except Exception:
+        pass
+
+CUSTOMER_PROFILE_CACHE: Dict[str, Dict[str, str]] = load_cache()
 
 
 

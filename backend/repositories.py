@@ -160,3 +160,20 @@ class NotificationRepository:
             .order_by(Notification.created_time.desc())\
             .limit(limit)\
             .all()
+
+    def save_historical_notification(self, facebook_notification_id: str, page_id: str, title: str, link: str, created_time) -> Notification:
+        notif = self.get_by_fb_notification_id(facebook_notification_id)
+        if not notif:
+            notif = Notification(
+                facebook_notification_id=facebook_notification_id,
+                page_id=page_id,
+                title=title,
+                link=link,
+                created_time=created_time,
+                unread=False,  # Historical notifications are considered read
+                is_replied=False
+            )
+            self.db.add(notif)
+            self.db.commit()
+            self.db.refresh(notif)
+        return notif

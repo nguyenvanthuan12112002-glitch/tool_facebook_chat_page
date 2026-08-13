@@ -77,3 +77,16 @@ class Notification(Base):
 
     def __repr__(self):
         return f"<Notification {self.title[:30]}... (Page: {self.page_id})>"
+
+class PushSubscription(Base):
+    __tablename__ = "v_push_subscriptions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    facebook_user_id = Column(String(100), ForeignKey("v_accounts.facebook_user_id", ondelete="CASCADE"), nullable=False)
+    endpoint = Column(Text, nullable=False)
+    p256dh = Column(Text, nullable=False)
+    auth = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    def __repr__(self):
+        return f"<PushSubscription (User: {self.facebook_user_id})>"

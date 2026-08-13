@@ -57,13 +57,29 @@ interface ToastState {
 }
 
 export default function PageSyncCard() {
-  const API_BASE_URL = "http://localhost:8000/api/facebook";
-  const WS_BASE_URL = "ws://localhost:8000/api/facebook/ws";
+  const isDevServer = typeof window !== "undefined" && window.location.port === "3000";
+  const API_BASE_URL = isDevServer
+    ? "http://localhost:8000/api/facebook"
+    : (typeof window !== "undefined" ? `${window.location.origin}/api/facebook` : "http://localhost:8000/api/facebook");
+
+  const WS_BASE_URL = isDevServer
+    ? "ws://localhost:8000/api/facebook/ws"
+    : (typeof window !== "undefined" ? `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/api/facebook/ws` : "ws://localhost:8000/api/facebook/ws");
+
+  const fetchAPI = async (url: string, options: RequestInit = {}) => {
+    return fetch(url, {
+      ...options,
+      headers: {
+        ...options.headers,
+        "ngrok-skip-browser-warning": "true"
+      }
+    });
+  };
 
   // Config & Session
   const [facebookUserId, setFacebookUserId] = useState<string>("");
   const [customAccessToken, setCustomAccessToken] = useState<string>("");
-  
+
   // ERROR CATCHING STATE
   const [crashError, setCrashError] = useState<string | null>(null);
 
@@ -77,18 +93,21 @@ export default function PageSyncCard() {
       setCrashError(`Unhandled Rejection: ${e.reason?.message || e.reason} \n ${e.reason?.stack}`);
     });
   }, []);
-  
+
   // Data States
   const [dbPages, setDbPages] = useState<PageData[]>([]);
   const [conversations, setConversations] = useState<ConversationData[]>([]);
   const [messages, setMessages] = useState<MessageData[]>([]);
   const [notifications, setNotifications] = useState<NotificationData[]>([]);
-  
+
   // Filter States
   const [chatFilter, setChatFilter] = useState<"all" | "unread" | "unreplied">("all");
   const [notificationFilter, setNotificationFilter] = useState<"all" | "unread" | "unreplied">("all");
-  
+
   // Selection States
+  const [selectedPageId, setSelectedPageId] = useState<string>("all");
+  const [showConfigModal, setShowConfigModal] = useState<boolean>(false);
+
   const [activeThread, setActiveThread] = useState<{
     page_id: string;
     sender_id: string;
@@ -98,9 +117,39 @@ export default function PageSyncCard() {
     page_name?: string;
   } | null>(null);
 
+  // Calculate unread counts per page
+  const pageUnreadCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    conversations.forEach(c => {
+      if (!c.is_read) {
+        counts[c.page_id] = (counts[c.page_id] || 0) + 1;
+      }
+    });
+    notifications.forEach(n => {
+      if (n.unread) {
+        counts[n.page_id] = (counts[n.page_id] || 0) + 1;
+      }
+    });
+    return counts;
+  }, [conversations, notifications]);
+
+  // Sort dbPages: those with unread counts > 0 first, then by count descending
+  const sortedDbPages = useMemo(() => {
+    return [...dbPages].sort((a, b) => {
+      const countA = pageUnreadCounts[a.page_id] || 0;
+      const countB = pageUnreadCounts[b.page_id] || 0;
+      return countB - countA;
+    });
+  }, [dbPages, pageUnreadCounts]);
+
   // Unified Omnichannel Inbox: Messenger Chats (Comments are only in Notifications Tab)
   const allThreads = useMemo(() => {
     let filteredConversations = conversations;
+
+    if (selectedPageId !== "all") {
+      filteredConversations = filteredConversations.filter(c => c.page_id === selectedPageId);
+    }
+
     if (chatFilter === "unread") {
       filteredConversations = filteredConversations.filter(c => !c.is_read);
     } else if (chatFilter === "unreplied") {
@@ -121,24 +170,27 @@ export default function PageSyncCard() {
 
     chatItems.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
     return chatItems;
-  }, [conversations, chatFilter]);
-  
+  }, [conversations, chatFilter, selectedPageId]);
+
   const filteredNotifications = useMemo(() => {
     let filtered = notifications;
+    if (selectedPageId !== "all") {
+      filtered = filtered.filter(n => n.page_id === selectedPageId);
+    }
     if (notificationFilter === "unread") {
       filtered = filtered.filter(n => n.unread);
     } else if (notificationFilter === "unreplied") {
       filtered = filtered.filter(n => !n.is_replied);
     }
     return filtered;
-  }, [notifications, notificationFilter]);
+  }, [notifications, notificationFilter, selectedPageId]);
 
   // Tab Switchers
-  const [activeRightTab, setActiveRightTab] = useState<"config" | "notifications">("config");
+  const [activeRightTab, setActiveRightTab] = useState<"conversations" | "notifications">("conversations");
 
   // Input states
   const [replyText, setReplyText] = useState<string>("");
-  
+
   // Interactive UI states
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isResetting, setIsResetting] = useState<boolean>(false);
@@ -155,7 +207,7 @@ export default function PageSyncCard() {
       const psid = conv.sender_id;
       const pageId = conv.page_id;
       if (psid && pageId && !customerProfiles[psid]) {
-        fetch(`${API_BASE_URL}/customer_profile/${psid}?page_id=${pageId}`)
+        fetchAPI(`${API_BASE_URL}/customer_profile/${psid}?page_id=${pageId}`)
           .then((res) => (res.ok ? res.json() : null))
           .then((data) => {
             if (data && data.name) {
@@ -165,17 +217,18 @@ export default function PageSyncCard() {
               }));
             }
           })
-          .catch(() => {});
+          .catch(() => { });
       }
     });
   }, [conversations]);
-  
+
   // Refs
   const chatEndRef = useRef<HTMLDivElement | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const toastTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const wsPingRef = useRef<NodeJS.Timeout | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   // Additional Picker UI states
   const [showEmojiPicker, setShowEmojiPicker] = useState<boolean>(false);
@@ -202,7 +255,7 @@ export default function PageSyncCard() {
   function parseDate(dateStr: string | number | null): Date {
     if (!dateStr) return new Date();
     if (typeof dateStr === "number") return new Date(dateStr);
-    
+
     // If it's a string from FastAPI and doesn't contain timezone info, append 'Z' to treat it as UTC
     if (typeof dateStr === "string" && !dateStr.endsWith("Z") && !dateStr.includes("+")) {
       return new Date(dateStr + "Z");
@@ -210,15 +263,27 @@ export default function PageSyncCard() {
     return new Date(dateStr);
   };
 
+  // Helper to resolve attachment URL for mobile/remote access
+  function resolveAttachmentUrl(url: string) {
+    const SERVER_ORIGIN = API_BASE_URL.replace("/api/facebook", "");
+    if (url.startsWith("http://localhost:8000") || url.startsWith("http://127.0.0.1:8000")) {
+      return url.replace(/^http:\/\/(localhost|127\.0\.0\.1):8000/, SERVER_ORIGIN);
+    }
+    if (url.startsWith("/uploads/")) {
+      return SERVER_ORIGIN + url;
+    }
+    return url;
+  }
+
   // Helper to render message content with attachments (image/file/audio)
   function renderMessageContent(text: string | null) {
     if (!text) return null;
     if (text.startsWith("[image] ")) {
-      const url = text.substring(8);
+      const url = resolveAttachmentUrl(text.substring(8));
       return <img src={url} alt="Attachment" className={styles.attachmentImage} onClick={() => window.open(url, "_blank")} />;
     }
     if (text.startsWith("[audio] ")) {
-      const url = text.substring(8);
+      const url = resolveAttachmentUrl(text.substring(8));
       return (
         <div style={{ marginTop: "4px", minWidth: "240px", maxWidth: "100%" }}>
           <audio src={url} controls style={{ width: "100%", height: "40px", borderRadius: "20px" }} />
@@ -226,7 +291,7 @@ export default function PageSyncCard() {
       );
     }
     if (text.startsWith("[file] ")) {
-      const url = text.substring(7);
+      const url = resolveAttachmentUrl(text.substring(7));
       const isVideo = /\.(mp4|webm|ogg|mov)$/i.test(url);
       if (isVideo) {
         return (
@@ -286,7 +351,7 @@ export default function PageSyncCard() {
   const loadPagesFromDb = async (userId: string) => {
     if (!userId) return;
     try {
-      const res = await fetch(`${API_BASE_URL}/pages?facebook_user_id=${userId}`);
+      const res = await fetchAPI(`${API_BASE_URL}/pages?facebook_user_id=${userId}`);
       if (res.ok) {
         const data = await res.json();
         setDbPages(data || []);
@@ -300,7 +365,7 @@ export default function PageSyncCard() {
   const loadConversations = async (userId: string) => {
     if (!userId) return;
     try {
-      const res = await fetch(`${API_BASE_URL}/conversations?facebook_user_id=${userId}`);
+      const res = await fetchAPI(`${API_BASE_URL}/conversations?facebook_user_id=${userId}`);
       if (res.ok) {
         const data = await res.json();
         setConversations(data || []);
@@ -314,7 +379,7 @@ export default function PageSyncCard() {
   const loadNotifications = async (userId: string) => {
     if (!userId) return;
     try {
-      const res = await fetch(`${API_BASE_URL}/notifications?facebook_user_id=${userId}`);
+      const res = await fetchAPI(`${API_BASE_URL}/notifications?facebook_user_id=${userId}`);
       if (res.ok) {
         const data = await res.json();
         setNotifications(data || []);
@@ -328,7 +393,7 @@ export default function PageSyncCard() {
   const loadActiveThreadMessages = async (pageId: string, senderId: string) => {
     if (!facebookUserId) return;
     try {
-      const res = await fetch(
+      const res = await fetchAPI(
         `${API_BASE_URL}/messages?facebook_user_id=${facebookUserId}&page_id=${pageId}&sender_id=${senderId}`
       );
       if (res.ok) {
@@ -348,6 +413,11 @@ export default function PageSyncCard() {
       loadPagesFromDb(savedUserId);
       loadConversations(savedUserId);
       loadNotifications(savedUserId);
+    }
+
+    const savedToken = localStorage.getItem("saved_custom_access_token");
+    if (savedToken) {
+      setCustomAccessToken(savedToken);
     }
     return () => {
       if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
@@ -388,6 +458,61 @@ export default function PageSyncCard() {
     activeThreadRef.current = activeThread;
   }, [activeThread]);
 
+  const urlB64ToUint8Array = (base64String: string) => {
+    const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+    const base64 = (base64String + padding).replace(/\-/g, "+").replace(/_/g, "/");
+    const rawData = window.atob(base64);
+    const outputArray = new Uint8Array(rawData.length);
+    for (let i = 0; i < rawData.length; ++i) {
+      outputArray[i] = rawData.charCodeAt(i);
+    }
+    return outputArray;
+  };
+
+  const handleEnablePush = async () => {
+    if (!("Notification" in window) || !("serviceWorker" in navigator) || !("PushManager" in window)) {
+      triggerToast("Trình duyệt không hỗ trợ thông báo đẩy chạy ngầm (PushManager).", "error");
+      return;
+    }
+    const perm = await Notification.requestPermission();
+    if (perm !== "granted") {
+      triggerToast("Bạn đã từ chối quyền gửi thông báo.", "error");
+      return;
+    }
+
+    try {
+      const registration = await navigator.serviceWorker.register("/sw.js");
+
+      const vapidPublicKey = "BIPPFL5S0qQvSpk_f8Ktxvc-ZiJfv_9SqKufzdZyJSZ0YwgxkGgCWqJONr9XLX_fPFKK_eUrVis13lKcykxK26E";
+
+      const subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlB64ToUint8Array(vapidPublicKey),
+      });
+
+      const subJSON = subscription.toJSON();
+      const res = await fetchAPI(`${API_BASE_URL}/push/subscribe`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          facebook_user_id: facebookUserId,
+          endpoint: subJSON.endpoint,
+          p256dh: subJSON.keys?.p256dh,
+          auth: subJSON.keys?.auth
+        })
+      });
+
+      if (res.ok) {
+        triggerToast("Đã đăng ký nhận thông báo chạy ngầm thành công!", "success");
+      } else {
+        triggerToast("Lỗi khi lưu thông tin đẩy lên máy chủ.", "error");
+      }
+    } catch (e) {
+      console.error(e);
+      triggerToast("Lỗi đăng ký Push: " + String(e), "error");
+    }
+  };
+
   // Connect WebSocket for real-time pushes
   useEffect(() => {
     if (!facebookUserId) {
@@ -419,7 +544,7 @@ export default function PageSyncCard() {
         try {
           const packet = JSON.parse(event.data);
           if (packet.type === "pong") return; // ignore server pong
-          
+
           if (packet.type === "message") {
             const newMsg: MessageData = packet.data;
             const currentThread = activeThreadRef.current;
@@ -433,8 +558,18 @@ export default function PageSyncCard() {
             }
             // 2. Immediately update sidebar conversation preview
             loadConversations(facebookUserId);
-          } 
-          
+
+            // Trigger push notification if in background or not currently reading this thread
+            if ("Notification" in window && Notification.permission === "granted") {
+              if (document.hidden || !currentThread || currentThread.sender_id !== newMsg.sender_id) {
+                new Notification("Tin nhắn mới", {
+                  body: newMsg.text || "Bạn có 1 tin nhắn hình ảnh/âm thanh mới.",
+                  icon: "https://upload.wikimedia.org/wikipedia/commons/thumb/b/b8/2021_Facebook_icon.svg/512px-2021_Facebook_icon.svg.png"
+                });
+              }
+            }
+          }
+
           else if (packet.type === "reaction") {
             const reactionData = packet.data;
             setMessages((prev) =>
@@ -462,6 +597,13 @@ export default function PageSyncCard() {
             });
             // Trigger UI popup toast
             triggerToast(newNotif.title, "success");
+
+            if ("Notification" in window && Notification.permission === "granted" && document.hidden) {
+              new Notification(newNotif.title, {
+                body: newNotif.page_name,
+                icon: "https://upload.wikimedia.org/wikipedia/commons/thumb/b/b8/2021_Facebook_icon.svg/512px-2021_Facebook_icon.svg.png"
+              });
+            }
           }
         } catch (err) {
           console.error("Error parsing WebSocket packet:", err);
@@ -496,7 +638,7 @@ export default function PageSyncCard() {
 
     setIsLoading(true);
     try {
-      const response = await fetch(`${API_BASE_URL}/sync-by-token`, {
+      const response = await fetchAPI(`${API_BASE_URL}/sync-by-token`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ access_token: customAccessToken }),
@@ -507,12 +649,12 @@ export default function PageSyncCard() {
         setDbPages(data.pages || []);
         setFacebookUserId(data.facebook_user_id);
         localStorage.setItem("saved_fb_user_id", data.facebook_user_id);
-        
+
         loadConversations(data.facebook_user_id);
         loadNotifications(data.facebook_user_id);
-        
+
+        localStorage.setItem("saved_custom_access_token", customAccessToken);
         triggerToast(data.message, "success");
-        setCustomAccessToken(""); // clear input
       } else {
         const errorMsg = data.detail || "Có lỗi xảy ra khi đồng bộ.";
         // Catch auth/OAuth failures and trigger standard error toast
@@ -531,22 +673,22 @@ export default function PageSyncCard() {
 
   const markChatRead = async (pageId: string, senderId: string) => {
     setConversations(prev => prev.map(c => (c.page_id === pageId && c.sender_id === senderId) ? { ...c, is_read: true } : c));
-    try { await fetch(`${API_BASE_URL}/conversations/${pageId}/${senderId}/read`, { method: "PUT" }); } catch (e) {}
+    try { await fetchAPI(`${API_BASE_URL}/conversations/${pageId}/${senderId}/read`, { method: "PUT" }); } catch (e) { }
   };
 
   const markChatReplied = async (pageId: string, senderId: string) => {
     setConversations(prev => prev.map(c => (c.page_id === pageId && c.sender_id === senderId) ? { ...c, is_replied: true } : c));
-    try { await fetch(`${API_BASE_URL}/conversations/${pageId}/${senderId}/replied`, { method: "PUT" }); } catch (e) {}
+    try { await fetchAPI(`${API_BASE_URL}/conversations/${pageId}/${senderId}/replied`, { method: "PUT" }); } catch (e) { }
   };
 
   const markNotificationRead = async (notifId: string) => {
     setNotifications(prev => prev.map(n => n.facebook_notification_id === notifId ? { ...n, unread: false } : n));
-    try { await fetch(`${API_BASE_URL}/notifications/${notifId}/read`, { method: "PUT" }); } catch (e) {}
+    try { await fetchAPI(`${API_BASE_URL}/notifications/${notifId}/read`, { method: "PUT" }); } catch (e) { }
   };
 
   const markNotificationReplied = async (notifId: string) => {
     setNotifications(prev => prev.map(n => n.facebook_notification_id === notifId ? { ...n, is_replied: true } : n));
-    try { await fetch(`${API_BASE_URL}/notifications/${notifId}/replied`, { method: "PUT" }); } catch (e) {}
+    try { await fetchAPI(`${API_BASE_URL}/notifications/${notifId}/replied`, { method: "PUT" }); } catch (e) { }
   };
 
   // Send Reply via Facebook Send API
@@ -558,7 +700,7 @@ export default function PageSyncCard() {
     setReplyText(""); // Clear input immediately for responsive UX
     setIsSending(true);
     try {
-      const response = await fetch(`${API_BASE_URL}/send-reply`, {
+      const response = await fetchAPI(`${API_BASE_URL}/send-reply`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -600,22 +742,34 @@ export default function PageSyncCard() {
 
     const formData = new FormData();
     formData.append("page_id", activeThread.page_id);
-    formData.append("recipient_id", activeThread.sender_id);
+    formData.append("recipient_id", activeThread.sender_id); // sender_id holds the comment ID for comments
     formData.append("attachment_type", file.type.startsWith("image/") ? "image" : "file");
+    if (activeThread.type === "comment") {
+      formData.append("is_comment", "true");
+    }
+    if (replyingTo?.facebook_message_id) {
+      formData.append("reply_to_message_id", replyingTo.facebook_message_id);
+    }
     formData.append("file", file);
 
     setIsSending(true);
     try {
-      const response = await fetch(`${API_BASE_URL}/send-attachment`, {
+      const response = await fetchAPI(`${API_BASE_URL}/send-attachment`, {
         method: "POST",
         body: formData,
       });
       const data = await response.json();
 
       if (response.ok) {
-        await markChatReplied(activeThread.page_id, activeThread.sender_id);
-        await loadActiveThreadMessages(activeThread.page_id, activeThread.sender_id);
+        if (activeThread.type === "comment") {
+          await markNotificationReplied(activeThread.sender_id);
+          triggerToast("Đã phản hồi bình luận kèm ảnh!", "success");
+        } else {
+          await markChatReplied(activeThread.page_id, activeThread.sender_id);
+          await loadActiveThreadMessages(activeThread.page_id, activeThread.sender_id);
+        }
         loadConversations(facebookUserId); // update sidebar snippet
+        setReplyingTo(null);
       } else {
         const errorMsg = data.detail || "Gửi tệp đính kèm thất bại.";
         triggerToast(errorMsg, "error");
@@ -633,21 +787,26 @@ export default function PageSyncCard() {
     if (!activeThread) return;
     setIsSending(true);
     try {
-      const response = await fetch(`${API_BASE_URL}/send-attachment-url`, {
+      const bodyParams = new URLSearchParams({
+        page_id: activeThread.page_id,
+        recipient_id: activeThread.sender_id,
+        attachment_type: type,
+        url: url,
+      });
+      if (replyingTo?.facebook_message_id) {
+        bodyParams.append("reply_to_message_id", replyingTo.facebook_message_id);
+      }
+      const response = await fetchAPI(`${API_BASE_URL}/send-attachment-url`, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({
-          page_id: activeThread.page_id,
-          recipient_id: activeThread.sender_id,
-          attachment_type: type,
-          url: url,
-        }),
+        body: bodyParams,
       });
       const data = await response.json();
       if (response.ok) {
         await markChatReplied(activeThread.page_id, activeThread.sender_id);
         await loadActiveThreadMessages(activeThread.page_id, activeThread.sender_id);
         loadConversations(facebookUserId); // update sidebar snippet
+        setReplyingTo(null);
       } else {
         const errorMsg = data.detail || "Gửi tệp đính kèm thất bại.";
         triggerToast(errorMsg, "error");
@@ -666,7 +825,16 @@ export default function PageSyncCard() {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       audioChunksRef.current = [];
-      const mediaRecorder = new MediaRecorder(stream);
+      let options = {};
+      if (typeof MediaRecorder.isTypeSupported === "function") {
+        if (MediaRecorder.isTypeSupported("audio/webm")) {
+          options = { mimeType: "audio/webm" };
+        } else if (MediaRecorder.isTypeSupported("audio/mp4")) {
+          options = { mimeType: "audio/mp4" };
+        }
+      }
+      
+      const mediaRecorder = new MediaRecorder(stream, options);
       mediaRecorderRef.current = mediaRecorder;
 
       mediaRecorder.ondataavailable = (event) => {
@@ -676,19 +844,29 @@ export default function PageSyncCard() {
       };
 
       mediaRecorder.onstop = async () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
-        const audioFile = new File([audioBlob], `voice_${Date.now()}.webm`, { type: "audio/webm" });
-        
+        const mimeType = mediaRecorder.mimeType || "audio/webm";
+        let ext = "webm";
+        if (mimeType.includes("mp4")) ext = "mp4";
+        else if (mimeType.includes("ogg")) ext = "ogg";
+        else if (mimeType.includes("aac")) ext = "aac";
+        else if (mimeType.includes("mpeg")) ext = "mp3";
+
+        const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
+        const audioFile = new File([audioBlob], `voice_${Date.now()}.${ext}`, { type: mimeType });
+
         if (!activeThread) return;
         const formData = new FormData();
         formData.append("page_id", activeThread.page_id);
         formData.append("recipient_id", activeThread.sender_id);
         formData.append("attachment_type", "audio");
+        if (replyingTo?.facebook_message_id) {
+          formData.append("reply_to_message_id", replyingTo.facebook_message_id);
+        }
         formData.append("file", audioFile);
 
         setIsSending(true);
         try {
-          const response = await fetch(`${API_BASE_URL}/send-attachment`, {
+          const response = await fetchAPI(`${API_BASE_URL}/send-attachment`, {
             method: "POST",
             body: formData,
           });
@@ -696,6 +874,7 @@ export default function PageSyncCard() {
             await markChatReplied(activeThread.page_id, activeThread.sender_id);
             await loadActiveThreadMessages(activeThread.page_id, activeThread.sender_id);
             loadConversations(facebookUserId);
+            setReplyingTo(null);
           } else {
             triggerToast("Không thể gửi tin nhắn thoại.", "error");
           }
@@ -749,7 +928,7 @@ export default function PageSyncCard() {
   const handleReactToMessage = async (facebookMessageId: string, emoji: string | null) => {
     if (!activeThread) return;
     try {
-      const response = await fetch(`${API_BASE_URL}/messages/${facebookMessageId}/react`, {
+      const response = await fetchAPI(`${API_BASE_URL}/messages/${facebookMessageId}/react`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -777,7 +956,7 @@ export default function PageSyncCard() {
     if (!activeThread) return;
     if (!window.confirm("Bạn có chắc chắn muốn gỡ tin nhắn này không?")) return;
     try {
-      const response = await fetch(`${API_BASE_URL}/messages/${facebookMessageId}?page_id=${activeThread.page_id}`, {
+      const response = await fetchAPI(`${API_BASE_URL}/messages/${facebookMessageId}?page_id=${activeThread.page_id}`, {
         method: "DELETE",
       });
       if (response.ok) {
@@ -797,7 +976,7 @@ export default function PageSyncCard() {
   // Forward a message to another thread
   const handleForwardMessage = async (targetPageId: string, targetSenderId: string) => {
     if (!messageToForward) return;
-    
+
     let content = messageToForward.text || "";
     setIsSending(true);
     try {
@@ -806,8 +985,8 @@ export default function PageSyncCard() {
         const prefix = content.split(" ")[0];
         const attType = prefix === "[image]" ? "image" : "file";
         const url = content.substring(prefix.length + 1);
-        
-        response = await fetch(`${API_BASE_URL}/send-attachment-url`, {
+
+        response = await fetchAPI(`${API_BASE_URL}/send-attachment-url`, {
           method: "POST",
           headers: { "Content-Type": "application/x-www-form-urlencoded" },
           body: new URLSearchParams({
@@ -818,7 +997,7 @@ export default function PageSyncCard() {
           }),
         });
       } else {
-        response = await fetch(`${API_BASE_URL}/send-reply`, {
+        response = await fetchAPI(`${API_BASE_URL}/send-reply`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -858,7 +1037,7 @@ export default function PageSyncCard() {
     if (window.confirm("Bạn có chắc chắn muốn xóa toàn bộ dữ liệu tài khoản, tin nhắn và trang không?")) {
       setIsResetting(true);
       try {
-        const response = await fetch(`${API_BASE_URL}/reset`, { method: "POST" });
+        const response = await fetchAPI(`${API_BASE_URL}/reset`, { method: "POST" });
         const data = await response.json();
 
         if (response.ok) {
@@ -888,7 +1067,7 @@ export default function PageSyncCard() {
     if (!text || !text.trim()) return;
 
     try {
-      const response = await fetch(`${API_BASE_URL}/comments/${commentId}/reply`, {
+      const response = await fetchAPI(`${API_BASE_URL}/comments/${commentId}/reply`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ page_id: pageId, text }),
@@ -909,7 +1088,7 @@ export default function PageSyncCard() {
   // React/Like comment directly from notification
   const handleReactToComment = async (commentId: string, pageId: string, emojiName: string) => {
     try {
-      const response = await fetch(`${API_BASE_URL}/comments/${commentId}/react`, {
+      const response = await fetchAPI(`${API_BASE_URL}/comments/${commentId}/react`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ page_id: pageId, reaction: emojiName }),
@@ -938,7 +1117,7 @@ export default function PageSyncCard() {
       const randomSenderId = "psid_" + Math.floor(Math.random() * 1000000000);
       const randomMsgId = "mid.mock_" + Math.random().toString(36).substring(2, 15);
       const timestamp = Date.now();
-      
+
       let payload: any = { object: "page", entry: [] };
 
       if (simulateType === "message") {
@@ -960,8 +1139,8 @@ export default function PageSyncCard() {
             message: { mid: randomMsgId, text: randomText }
           }]
         });
-      } 
-      
+      }
+
       else {
         // Feed events (Comments/Likes)
         const mockChange: any = {
@@ -987,7 +1166,7 @@ export default function PageSyncCard() {
         });
       }
 
-      const response = await fetch(`${API_BASE_URL}/webhook`, {
+      const response = await fetchAPI(`${API_BASE_URL}/webhook`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
@@ -1022,7 +1201,7 @@ export default function PageSyncCard() {
       const lastMsgTime = parseDate(lastCustomerMsg.created_at).getTime();
       const timeDiffMs = Date.now() - lastMsgTime;
       const hoursDiff = timeDiffMs / (1000 * 60 * 60);
-      
+
       if (hoursDiff >= 24) {
         is24hBlocked = true;
       } else {
@@ -1032,8 +1211,13 @@ export default function PageSyncCard() {
     }
   }
 
-  const unreadNotifsCount = notifications.filter((n) => n.unread).length;
-
+  const unreadThreadsCount = conversations.filter(
+    (c) => !c.is_read && (selectedPageId === "all" || c.page_id === selectedPageId)
+  ).length;
+  
+  const unreadNotifsCount = notifications.filter(
+    (n) => n.unread && (selectedPageId === "all" || n.page_id === selectedPageId)
+  ).length;
   return (
     <div className={styles.container}>
       {crashError && (
@@ -1066,735 +1250,745 @@ export default function PageSyncCard() {
           <h1 className={styles.headerTitle}>Hội thoại Đa kênh (Omnichannel Dashboard)</h1>
           <p className={styles.headerDesc}>Quản lý chat tập trung, đồng bộ các Fanpage và nhận thông báo thời gian thực.</p>
         </div>
+        <button
+          className={`${styles.btn} ${styles.btnPrimary}`}
+          style={{ textTransform: 'uppercase', letterSpacing: '1px' }}
+          onClick={() => setShowConfigModal(true)}
+        >
+          CẤU HÌNH
+        </button>
       </div>
 
       {/* Main Omnichannel Dashboard Layout */}
       <div className={styles.dashboardLayout}>
-        
-        {/* COLUMN 1: Conversations list */}
-        <div className={styles.leftPanel}>
-          <div className={styles.panelHeader}>
-            <span>Hội thoại</span>
-            <span style={{ fontSize: "11px", color: "var(--text-muted)", textTransform: "none" }}>
-              ({allThreads.length} Active)
-            </span>
-          </div>
-          
-          <div className={styles.filterTabs}>
-            <button className={`${styles.filterTab} ${chatFilter === "all" ? styles.filterTabActive : ""}`} onClick={() => setChatFilter("all")}>Tất cả</button>
-            <button className={`${styles.filterTab} ${chatFilter === "unread" ? styles.filterTabActive : ""}`} onClick={() => setChatFilter("unread")}>Chưa xem</button>
-            <button className={`${styles.filterTab} ${chatFilter === "unreplied" ? styles.filterTabActive : ""}`} onClick={() => setChatFilter("unreplied")}>Chưa trả lời</button>
-          </div>
-          
-          <div className={styles.threadList}>
-            {allThreads.length === 0 ? (
-              <div style={{ padding: "20px", color: "var(--text-muted)", fontSize: "12px", textAlign: "center" }}>
-                Chưa có hội thoại nào. Đồng bộ trang và nhắn thử tin nhắn hoặc bình luận để test.
-              </div>
-            ) : (
-              allThreads.map((thread) => {
-                const isActive = activeThread?.type !== "comment" && activeThread?.page_id === thread.page_id && activeThread?.sender_id === thread.sender_id;
-                const customerName = customerProfiles[thread.sender_id]?.name || `KH: ${thread.sender_id?.substring(0, 8) || "Unknown"}...`;
 
-                return (
-                  <div
-                    key={thread.key}
-                    className={`${styles.threadItem} ${isActive ? styles.threadItemActive : ""}`}
-                    onClick={() => {
-                      setActiveThread({ type: "chat", page_id: thread.page_id, sender_id: thread.sender_id });
-                      markChatRead(thread.page_id, thread.sender_id);
-                    }}
-                  >
-                    <div className={styles.threadMeta}>
-                      <span className={styles.threadSender} style={{ display: "flex", alignItems: "center", gap: "4px" }}>
-                        <span style={{ fontSize: "9px", padding: "1px 5px", borderRadius: "4px", background: "rgba(59, 130, 246, 0.2)", color: "#60a5fa", fontWeight: 700 }}>
-                          💬 Chat
+        {/* COLUMN 1: Danh sách Page */}
+        <div className={`${styles.leftPanel} ${styles.mobileHidden}`}>
+          <div style={{ padding: "16px", borderBottom: "1px solid var(--border-glass)" }}>
+            <button
+              className={`${styles.btn} ${styles.btnSecondary}`}
+              onClick={handleResetDatabase}
+              disabled={isLoading || isResetting}
+              style={{
+                width: "100%",
+                borderColor: "rgba(239, 68, 68, 0.4)",
+                color: "#fca5a5",
+                background: "rgba(239, 68, 68, 0.08)"
+              }}
+            >
+              {isResetting ? "Đang xóa..." : "Reset Dữ liệu"}
+            </button>
+          </div>
+
+          <div className={styles.panelHeader}>
+            <span>Danh sách Page ({dbPages.length})</span>
+          </div>
+
+          <div className={styles.listContainer} style={{ flexGrow: 1, overflowY: "auto", padding: "12px" }}>
+            <div
+              className={`${styles.pageCard} ${selectedPageId === "all" ? styles.pageCardActive : ""}`}
+              onClick={() => setSelectedPageId("all")}
+            >
+              <span className={styles.pageName}>🌟 Tất cả các Trang</span>
+            </div>
+
+            {sortedDbPages.map((page) => {
+              const unreadCount = pageUnreadCounts[page.page_id] || 0;
+              return (
+                <div
+                  key={page.id}
+                  className={`${styles.pageCard} ${selectedPageId === page.page_id ? styles.pageCardActive : ""}`}
+                  onClick={() => setSelectedPageId(page.page_id)}
+                >
+                  <div className={styles.pageLeft}>
+                    <div className={styles.avatarWrapper} style={{ width: "28px", height: "28px" }}>
+                      {page.avatar_url ? (
+                        <img src={page.avatar_url} alt="" className={styles.avatar} />
+                      ) : (
+                        <span style={{ fontSize: "12px", fontWeight: 700, color: "#3b82f6" }}>
+                          {page.page_name.charAt(0)}
                         </span>
-                        <span>{customerName}</span>
-                      </span>
-                      <span className={styles.threadTime}>
-                        {parseDate(thread.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                      </span>
+                      )}
                     </div>
-                    <div className={styles.threadPreview}>
-                      <span style={{ fontWeight: thread.is_read ? "normal" : "bold", color: thread.is_read ? "inherit" : "#fff" }}>
-                        {thread.preview}
-                      </span>
-                    </div>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "6px" }}>
-                      <div className={styles.threadPageBadge}>
-                        {thread.page_name}
-                      </div>
-                      <div style={{ display: "flex", gap: "6px", fontSize: "10px" }}>
-                        {!thread.is_read && <span style={{ display: "flex", alignItems: "center", gap: "3px", color: "#60a5fa" }}>🔵 Chưa xem</span>}
-                        {thread.is_replied && <span style={{ display: "flex", alignItems: "center", gap: "3px", color: "#34d399" }}>✔ Đã trả lời</span>}
-                      </div>
-                    </div>
+                    <span className={styles.pageName}>{page.page_name}</span>
                   </div>
-                );
-              })
-            )}
+                  <div style={{ display: "flex", alignItems: "center" }}>
+                    {unreadCount > 0 && (
+                      <span className={styles.pageUnreadBadge}>{unreadCount}</span>
+                    )}
+                    <div className={`${styles.statusIndicator} ${styles.statusIndicatorActive}`} />
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
 
         {/* COLUMN 2: Center Chat Workspace */}
-        <div className={styles.centerPanel}>
+        <div className={`${styles.centerPanel} ${!activeThread ? styles.mobileHidden : ""}`}>
+          {/* Hidden File Input for both Chat and Comments */}
+          <input
+            type="file"
+            ref={fileInputRef}
+            style={{ display: "none" }}
+            onChange={handleFileChange}
+            accept="image/*,video/*,audio/*,application/*"
+          />
           {activeThread ? (
             activeThread.type === "comment" ? (
               <>
-                  {/* Chat Header for Comment Thread */}
-                  <div className={styles.chatHeader}>
-                    <div className={styles.avatarWrapper} style={{ width: "38px", height: "38px", background: "#8b5cf6" }}>
-                      <span style={{ fontSize: "14px", fontWeight: 700, color: "#ffffff" }}>
-                        {(activeThread.title || "K").charAt(0).toUpperCase()}
+                {/* Chat Header for Comment Thread */}
+                <div className={styles.chatHeader}>
+                  <button className={styles.mobileBackBtn} onClick={() => setActiveThread(null)} style={{ background: "none", color: "#0084ff", padding: "0 8px 0 0", marginRight: "4px" }}>
+                    <svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor"><path d="M15.41 16.59L10.83 12l4.58-4.59L14 6l-6 6 6 6 1.41-1.41z" /></svg>
+                  </button>
+                  <div className={styles.avatarWrapper} style={{ width: "38px", height: "38px", background: "#8b5cf6" }}>
+                    <span style={{ fontSize: "14px", fontWeight: 700, color: "#ffffff" }}>
+                      {(activeThread.title || "K").charAt(0).toUpperCase()}
+                    </span>
+                  </div>
+                  <div>
+                    <div className={styles.chatHeaderTitle} style={{ display: "flex", flexDirection: "column" }}>
+                      <span>{activeThread.title?.split("đã bình luận")[0]?.trim() || "Khách hàng"}</span>
+                      <span style={{ fontSize: "10px", background: "rgba(168, 85, 247, 0.2)", color: "#c084fc", padding: "2px 6px", borderRadius: "4px", fontWeight: 700 }}>
+                        Bình luận bài viết
                       </span>
                     </div>
-                    <div>
-                      <div className={styles.chatHeaderTitle} style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                        <span>{activeThread.title?.split("đã bình luận")[0]?.trim() || "Khách hàng"}</span>
-                        <span style={{ fontSize: "10px", background: "rgba(168, 85, 247, 0.2)", color: "#c084fc", padding: "2px 6px", borderRadius: "4px", fontWeight: 700 }}>
-                          Bình luận bài viết
-                        </span>
+                    <div className={styles.chatHeaderSubtitle} style={{ fontSize: "12px", color: "rgba(255,255,255,0.6)" }}>
+                      Trang nhận: {activeThread.page_name || dbPages.find(p => p.page_id === activeThread?.page_id)?.page_name || "Không rõ"}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Chat Body for Comment Thread */}
+                <div className={styles.chatBody}>
+                  <div className={styles.messageRow} style={{ justifyContent: "flex-start", marginBottom: "16px" }}>
+                    <div className={styles.bubble} style={{ background: "rgba(139, 92, 246, 0.12)", border: "1px solid rgba(139, 92, 246, 0.3)", maxWidth: "85%", borderRadius: "16px", padding: "12px 16px" }}>
+                      <div style={{ fontSize: "13px", fontWeight: 600, color: "#e9d5ff", marginBottom: "6px" }}>
+                        {activeThread.title}
                       </div>
-                      <div className={styles.chatHeaderSubtitle}>
-                        Trang nhận: {activeThread.page_name}
+                      <div className={styles.commentReactionContainer} style={{ marginTop: "8px" }}>
+                        {[
+                          { emoji: "👍", name: "LIKE" },
+                          { emoji: "❤️", name: "LOVE" },
+                          { emoji: "😂", name: "HAHA" },
+                          { emoji: "😮", name: "WOW" },
+                          { emoji: "😢", name: "SAD" },
+                          { emoji: "😡", name: "ANGRY" }
+                        ].map((item) => (
+                          <span
+                            key={item.name}
+                            className={styles.commentReactionEmoji}
+                            onClick={() => handleReactToComment(activeThread.comment_id!, activeThread.page_id, item.name)}
+                            title={`Thả cảm xúc ${item.emoji}`}
+                          >
+                            {item.emoji}
+                          </span>
+                        ))}
                       </div>
                     </div>
                   </div>
+                </div>
 
-                  {/* Chat Body for Comment Thread */}
-                  <div className={styles.chatBody}>
-                    <div className={styles.messageRow} style={{ justifyContent: "flex-start", marginBottom: "16px" }}>
-                      <div className={styles.bubble} style={{ background: "rgba(139, 92, 246, 0.12)", border: "1px solid rgba(139, 92, 246, 0.3)", maxWidth: "85%", borderRadius: "16px", padding: "12px 16px" }}>
-                        <div style={{ fontSize: "13px", fontWeight: 600, color: "#e9d5ff", marginBottom: "6px" }}>
-                          {activeThread.title}
-                        </div>
-                        <div className={styles.commentReactionContainer} style={{ marginTop: "8px" }}>
-                          {[
-                            { emoji: "👍", name: "LIKE" },
-                            { emoji: "❤️", name: "LOVE" },
-                            { emoji: "😂", name: "HAHA" },
-                            { emoji: "😮", name: "WOW" },
-                            { emoji: "😢", name: "SAD" },
-                            { emoji: "😡", name: "ANGRY" }
-                          ].map((item) => (
-                            <span
-                              key={item.name}
-                              className={styles.commentReactionEmoji}
-                              onClick={() => handleReactToComment(activeThread.comment_id!, activeThread.page_id, item.name)}
-                              title={`Thả cảm xúc ${item.emoji}`}
-                            >
-                              {item.emoji}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Center Panel Bottom Bar: Facebook-Style Comment Reply Input Bar */}
-                  <div className={styles.messengerInputBar} style={{ padding: "12px" }}>
-                    {(() => {
-                      const notifId = activeThread.comment_id!;
-                      const targetPage = dbPages.find((p) => p.page_id === activeThread.page_id);
-                      const pageAvatar = targetPage?.avatar_url;
-                      return (
-                        <div className={styles.fbCommentWrapper}>
-                          <div className={styles.fbCommentAvatarBadge} title={`Bình luận với tư cách ${activeThread.page_name}`}>
-                            <div className={styles.fbAvatarCircle}>
-                              {pageAvatar ? (
-                                <img src={pageAvatar} alt="" />
-                              ) : (
-                                <span>{(activeThread.page_name || "P").charAt(0).toUpperCase()}</span>
-                              )}
-                            </div>
-                            <div className={styles.fbAvatarBadgeArrow}>▼</div>
+                {/* Center Panel Bottom Bar: Facebook-Style Comment Reply Input Bar */}
+                <div className={styles.messengerInputBar} style={{ padding: "12px" }}>
+                  {(() => {
+                    const notifId = activeThread.comment_id!;
+                    const targetPage = dbPages.find((p) => p.page_id === activeThread.page_id);
+                    const pageAvatar = targetPage?.avatar_url;
+                    return (
+                      <div className={styles.fbCommentWrapper}>
+                        <div className={styles.fbCommentAvatarBadge} title={`Bình luận với tư cách ${activeThread.page_name}`}>
+                          <div className={styles.fbAvatarCircle}>
+                            {pageAvatar ? (
+                              <img src={pageAvatar} alt="" />
+                            ) : (
+                              <span>{(activeThread.page_name || "P").charAt(0).toUpperCase()}</span>
+                            )}
                           </div>
+                          <div className={styles.fbAvatarBadgeArrow}>▼</div>
+                        </div>
 
-                          <div className={styles.fbCommentInputContainer}>
-                            {/* Interactive Popups */}
-                            {activeCommentPicker?.notifId === notifId && (
-                              <div className={styles.commentPickerPopup} onClick={(e) => e.stopPropagation()}>
-                                {activeCommentPicker.type === "emoji" && (
-                                  <>
-                                    <div className={styles.commentPickerTitle}>Biểu tượng cảm xúc</div>
-                                    <div className={styles.commentPickerGrid}>
-                                      {["😊", "👍", "❤️", "🔥", "🎉", "🙏", "😍", "🥰", "😂", "😮", "😢", "😡", "✨", "💯"].map((em) => (
-                                        <span
-                                          key={em}
-                                          className={styles.commentPickerItem}
-                                          onClick={() => {
-                                            setCommentReplies((prev) => ({
-                                              ...prev,
-                                              [notifId]: (prev[notifId] || "") + em
-                                            }));
-                                            setActiveCommentPicker(null);
-                                          }}
-                                        >
-                                          {em}
-                                        </span>
-                                      ))}
-                                    </div>
-                                  </>
-                                )}
-                                {activeCommentPicker.type === "gif" && (
-                                  <>
-                                    <div className={styles.commentPickerTitle}>Ảnh động GIF</div>
-                                    <div className={styles.commentPickerGrid}>
-                                      {["[GIF Cảm ơn]", "[GIF Xin chào]", "[GIF Thả tim]", "[GIF Chúc mừng]"].map((gifText) => (
-                                        <span
-                                          key={gifText}
-                                          className={styles.commentPickerBadgeItem}
-                                          onClick={() => {
-                                            setCommentReplies((prev) => ({
-                                              ...prev,
-                                              [notifId]: (prev[notifId] || "") + " " + gifText
-                                            }));
-                                            setActiveCommentPicker(null);
-                                          }}
-                                        >
-                                          {gifText}
-                                        </span>
-                                      ))}
-                                    </div>
-                                  </>
-                                )}
-                                {activeCommentPicker.type === "sticker" && (
-                                  <>
-                                    <div className={styles.commentPickerTitle}>Nhãn dán Sticker</div>
-                                    <div className={styles.commentPickerGrid}>
-                                      {["👍 Like", "❤️ Love", "🎉 Party", "🔥 Hot", "⭐ Star", "🐱 Cute Cat"].map((stk) => (
-                                        <span
-                                          key={stk}
-                                          className={styles.commentPickerBadgeItem}
-                                          onClick={() => {
-                                            setCommentReplies((prev) => ({
-                                              ...prev,
-                                              [notifId]: (prev[notifId] || "") + " " + stk
-                                            }));
-                                            setActiveCommentPicker(null);
-                                          }}
-                                        >
-                                          {stk}
-                                        </span>
-                                      ))}
-                                    </div>
-                                  </>
-                                )}
-                                {activeCommentPicker.type === "role" && (
-                                  <>
-                                    <div className={styles.commentPickerTitle}>Bình luận với tư cách Trang:</div>
-                                    {dbPages.map((pg) => (
-                                      <div
-                                        key={pg.page_id}
-                                        className={styles.commentPickerRoleItem}
+                        <div className={styles.fbCommentInputContainer}>
+                          {/* Interactive Popups */}
+                          {activeCommentPicker?.notifId === notifId && (
+                            <div className={styles.commentPickerPopup} onClick={(e) => e.stopPropagation()}>
+                              {activeCommentPicker.type === "emoji" && (
+                                <>
+                                  <div className={styles.commentPickerTitle}>Biểu tượng cảm xúc</div>
+                                  <div className={styles.commentPickerGrid}>
+                                    {["😊", "👍", "❤️", "🔥", "🎉", "🙏", "😍", "🥰", "😂", "😮", "😢", "😡", "✨", "💯"].map((em) => (
+                                      <span
+                                        key={em}
+                                        className={styles.commentPickerItem}
                                         onClick={() => {
-                                          triggerToast(`Đã chuyển vai trò bình luận sang ${pg.page_name}`, "success");
+                                          setCommentReplies((prev) => ({
+                                            ...prev,
+                                            [notifId]: (prev[notifId] || "") + em
+                                          }));
                                           setActiveCommentPicker(null);
                                         }}
                                       >
-                                        <span>📄</span>
-                                        <strong>{pg.page_name}</strong>
-                                      </div>
+                                        {em}
+                                      </span>
                                     ))}
-                                  </>
-                                )}
-                              </div>
-                            )}
+                                  </div>
+                                </>
+                              )}
+                              {activeCommentPicker.type === "gif" && (
+                                <>
+                                  <div className={styles.commentPickerTitle}>Ảnh động GIF</div>
+                                  <div className={styles.commentPickerGrid}>
+                                    {["[GIF Cảm ơn]", "[GIF Xin chào]", "[GIF Thả tim]", "[GIF Chúc mừng]"].map((gifText) => (
+                                      <span
+                                        key={gifText}
+                                        className={styles.commentPickerBadgeItem}
+                                        onClick={() => {
+                                          setCommentReplies((prev) => ({
+                                            ...prev,
+                                            [notifId]: (prev[notifId] || "") + " " + gifText
+                                          }));
+                                          setActiveCommentPicker(null);
+                                        }}
+                                      >
+                                        {gifText}
+                                      </span>
+                                    ))}
+                                  </div>
+                                </>
+                              )}
+                              {activeCommentPicker.type === "sticker" && (
+                                <>
+                                  <div className={styles.commentPickerTitle}>Nhãn dán Sticker</div>
+                                  <div className={styles.commentPickerGrid}>
+                                    {["👍 Like", "❤️ Love", "🎉 Party", "🔥 Hot", "⭐ Star", "🐱 Cute Cat"].map((stk) => (
+                                      <span
+                                        key={stk}
+                                        className={styles.commentPickerBadgeItem}
+                                        onClick={() => {
+                                          setCommentReplies((prev) => ({
+                                            ...prev,
+                                            [notifId]: (prev[notifId] || "") + " " + stk
+                                          }));
+                                          setActiveCommentPicker(null);
+                                        }}
+                                      >
+                                        {stk}
+                                      </span>
+                                    ))}
+                                  </div>
+                                </>
+                              )}
+                              {activeCommentPicker.type === "role" && (
+                                <>
+                                  <div className={styles.commentPickerTitle}>Bình luận với tư cách Trang:</div>
+                                  {dbPages.map((pg) => (
+                                    <div
+                                      key={pg.page_id}
+                                      className={styles.commentPickerRoleItem}
+                                      onClick={() => {
+                                        triggerToast(`Đã chuyển vai trò bình luận sang ${pg.page_name}`, "success");
+                                        setActiveCommentPicker(null);
+                                      }}
+                                    >
+                                      <span>📄</span>
+                                      <strong>{pg.page_name}</strong>
+                                    </div>
+                                  ))}
+                                </>
+                              )}
+                            </div>
+                          )}
 
-                            <input
-                              type="text"
-                              className={styles.fbCommentTextInput}
-                              placeholder={`Trả lời bình luận với tư cách ${activeThread.page_name}...`}
-                              value={commentReplies[notifId] || ""}
-                              onChange={(e) => setCommentReplies((prev) => ({
-                                ...prev,
-                                [notifId]: e.target.value
-                              }))}
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter") {
-                                  e.preventDefault();
-                                  handleReplyToComment(notifId, activeThread.page_id);
-                                }
-                              }}
-                            />
-                            <div className={styles.fbCommentToolbar}>
-                              <div className={styles.fbToolbarLeftIcons}>
-                                <button type="button" className={styles.fbToolbarIconBtn} title="Chọn vai trò bình luận" onClick={(e) => { e.stopPropagation(); setActiveCommentPicker(activeCommentPicker?.notifId === notifId && activeCommentPicker.type === "role" ? null : { notifId, type: "role" }); }}>
-                                  <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z"/></svg>
-                                </button>
-                                <button type="button" className={styles.fbToolbarIconBtn} title="Chèn biểu tượng cảm xúc" onClick={(e) => { e.stopPropagation(); setActiveCommentPicker(activeCommentPicker?.notifId === notifId && activeCommentPicker.type === "emoji" ? null : { notifId, type: "emoji" }); }}>
-                                  <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="M12 2C6.47 2 2 6.47 2 12s4.47 10 10 10 10-4.47 10-10S17.53 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm3.5-9c.83 0 1.5-.67 1.5-1.5S16.33 8 15.5 8 14 8.67 14 9.5s.67 1.5 1.5 1.5zm-7 0c.83 0 1.5-.67 1.5-1.5S9.33 8 8.5 8 7 8.67 7 9.5 7.67 11 8.5 11zm3.5 6.5c2.33 0 4.31-1.46 5.11-3.5H6.89c.8 2.04 2.78 3.5 5.11 3.5z"/></svg>
-                                </button>
-                                <button type="button" className={styles.fbToolbarIconBtn} title="Đính kèm ảnh hoặc video" onClick={(e) => { e.stopPropagation(); fileInputRef.current?.click(); }}>
-                                  <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/><path d="M9 2L7.17 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2h-3.17L15 2H9zm3 15c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5z"/></svg>
-                                </button>
-                                <button type="button" className={styles.fbToolbarIconBtn} title="Đính kèm file GIF" onClick={(e) => { e.stopPropagation(); setActiveCommentPicker(activeCommentPicker?.notifId === notifId && activeCommentPicker.type === "gif" ? null : { notifId, type: "gif" }); }}>
-                                  <span style={{ fontSize: "9px", fontWeight: 800, border: "1.2px solid currentColor", borderRadius: "3px", padding: "0 2px" }}>GIF</span>
-                                </button>
-                                <button type="button" className={styles.fbToolbarIconBtn} title="Đính kèm nhãn dán" onClick={(e) => { e.stopPropagation(); setActiveCommentPicker(activeCommentPicker?.notifId === notifId && activeCommentPicker.type === "sticker" ? null : { notifId, type: "sticker" }); }}>
-                                  <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="M12 2A10 10 0 0 0 2 12a10 10 0 0 0 10 10 10 10 0 0 0 10-10A10 10 0 0 0 12 2zm1 17.93V15a1 1 0 0 1 1-1h4.93A8.001 8.001 0 0 1 13 19.93zM19.93 13H15a3 3 0 0 0-3 3v4.93A8.006 8.006 0 0 1 4 12C4 7.58 7.58 4 12 4s8 3.58 8 8c0 .34-.02.67-.07 1z"/></svg>
-                                </button>
-                              </div>
-                              <button
-                                type="button"
-                                className={`${styles.fbSendBtn} ${(commentReplies[notifId] || "").trim() ? styles.fbSendBtnActive : ""}`}
-                                onClick={() => handleReplyToComment(notifId, activeThread.page_id)}
-                                disabled={!(commentReplies[notifId] || "").trim()}
-                                title="Gửi bình luận"
-                              >
-                                <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+                          <input
+                            type="text"
+                            className={styles.fbCommentTextInput}
+                            placeholder={`Trả lời bình luận với tư cách ${activeThread.page_name || dbPages.find(p => p.page_id === activeThread?.page_id)?.page_name || "Trang"}...`}
+                            value={commentReplies[notifId] || ""}
+                            onChange={(e) => setCommentReplies((prev) => ({
+                              ...prev,
+                              [notifId]: e.target.value
+                            }))}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                handleReplyToComment(notifId, activeThread.page_id);
+                              }
+                            }}
+                          />
+                          <div className={styles.fbCommentToolbar}>
+                            <div className={styles.fbToolbarLeftIcons}>
+                              <button type="button" className={styles.fbToolbarIconBtn} title="Chọn vai trò bình luận" onClick={(e) => { e.stopPropagation(); setActiveCommentPicker(activeCommentPicker?.notifId === notifId && activeCommentPicker.type === "role" ? null : { notifId, type: "role" }); }}>
+                                <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z" /></svg>
+                              </button>
+                              <button type="button" className={styles.fbToolbarIconBtn} title="Chèn biểu tượng cảm xúc" onClick={(e) => { e.stopPropagation(); setActiveCommentPicker(activeCommentPicker?.notifId === notifId && activeCommentPicker.type === "emoji" ? null : { notifId, type: "emoji" }); }}>
+                                <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="M12 2C6.47 2 2 6.47 2 12s4.47 10 10 10 10-4.47 10-10S17.53 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm3.5-9c.83 0 1.5-.67 1.5-1.5S16.33 8 15.5 8 14 8.67 14 9.5s.67 1.5 1.5 1.5zm-7 0c.83 0 1.5-.67 1.5-1.5S9.33 8 8.5 8 7 8.67 7 9.5 7.67 11 8.5 11zm3.5 6.5c2.33 0 4.31-1.46 5.11-3.5H6.89c.8 2.04 2.78 3.5 5.11 3.5z" /></svg>
+                              </button>
+                              <button type="button" className={styles.fbToolbarIconBtn} title="Đính kèm ảnh hoặc video" onClick={(e) => { e.stopPropagation(); fileInputRef.current?.click(); }}>
+                                <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z" /><path d="M9 2L7.17 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2h-3.17L15 2H9zm3 15c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5z" /></svg>
+                              </button>
+                              <button type="button" className={styles.fbToolbarIconBtn} title="Đính kèm file GIF" onClick={(e) => { e.stopPropagation(); setActiveCommentPicker(activeCommentPicker?.notifId === notifId && activeCommentPicker.type === "gif" ? null : { notifId, type: "gif" }); }}>
+                                <span style={{ fontSize: "9px", fontWeight: 800, border: "1.2px solid currentColor", borderRadius: "3px", padding: "0 2px" }}>GIF</span>
+                              </button>
+                              <button type="button" className={styles.fbToolbarIconBtn} title="Đính kèm nhãn dán" onClick={(e) => { e.stopPropagation(); setActiveCommentPicker(activeCommentPicker?.notifId === notifId && activeCommentPicker.type === "sticker" ? null : { notifId, type: "sticker" }); }}>
+                                <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="M12 2A10 10 0 0 0 2 12a10 10 0 0 0 10 10 10 10 0 0 0 10-10A10 10 0 0 0 12 2zm1 17.93V15a1 1 0 0 1 1-1h4.93A8.001 8.001 0 0 1 13 19.93zM19.93 13H15a3 3 0 0 0-3 3v4.93A8.006 8.006 0 0 1 4 12C4 7.58 7.58 4 12 4s8 3.58 8 8c0 .34-.02.67-.07 1z" /></svg>
                               </button>
                             </div>
-                          </div>
-                        </div>
-                      );
-                    })()}
-                  </div>
-                </>
-              ) : (
-                <>
-                  {/* Chat Header */}
-                  <div className={styles.chatHeader}>
-                    <div className={styles.avatarWrapper} style={{ width: "38px", height: "38px" }}>
-                      {customerProfiles[activeThread.sender_id]?.avatar ? (
-                        <img src={customerProfiles[activeThread.sender_id].avatar} alt="" className={styles.avatar} />
-                      ) : (
-                        <span style={{ fontSize: "14px", fontWeight: 700, color: "#3b82f6" }}>
-                          {(customerProfiles[activeThread.sender_id]?.name || "KH").charAt(0).toUpperCase()}
-                        </span>
-                      )}
-                    </div>
-                    <div>
-                      <div className={styles.chatHeaderTitle}>
-                        {customerProfiles[activeThread.sender_id]?.name || `Khách hàng (${activeThread.sender_id.substring(0, 8)}...)`}
-                      </div>
-                      <div className={styles.chatHeaderSubtitle}>
-                        PSID: {activeThread.sender_id} • Kênh nhận: {conversations.find((c) => c.page_id === activeThread.page_id)?.page_name || activeThread.page_id}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Chat Messages */}
-                  <div className={styles.chatBody}>
-                    {messages.map((msg) => {
-                      const isOut = msg.direction === "outbound";
-                      const showActions = hoveredMessageId === msg.facebook_message_id;
-                      const reactionsMenuOpen = activeReactionMenuId === msg.facebook_message_id;
-                      const actionMenuOpen = activeActionMenuId === msg.facebook_message_id;
-
-                      return (
-                    <div
-                      key={msg.id}
-                      className={`${styles.messageRow} ${isOut ? styles.messageRowOutbound : styles.messageRowInbound}`}
-                      onMouseEnter={() => setHoveredMessageId(msg.facebook_message_id)}
-                      onMouseLeave={() => {
-                        setHoveredMessageId(null);
-                        setActiveReactionMenuId(null);
-                        setActiveActionMenuId(null);
-                      }}
-                      style={{ position: "relative" }}
-                    >
-                      {/* Outbound hover utility buttons on the left */}
-                      {isOut && showActions && (
-                        <div className={styles.bubbleActionsLeft}>
-                          <button type="button" className={styles.bubbleActionBtn} onClick={() => setActiveReactionMenuId(reactionsMenuOpen ? null : msg.facebook_message_id)} title="Thả cảm xúc">😃</button>
-                          <button type="button" className={styles.bubbleActionBtn} onClick={() => setReplyingTo(msg)} title="Trả lời">↩️</button>
-                          <button type="button" className={styles.bubbleActionBtn} onClick={() => setActiveActionMenuId(actionMenuOpen ? null : msg.facebook_message_id)} title="Khác">⋮</button>
-                        </div>
-                      )}
-
-                      <div className={`${styles.bubble} ${isOut ? styles.bubbleOutbound : styles.bubbleInbound}`}>
-                        {/* Quoted Reply Quote Container */}
-                        {msg.reply_to_message_id && (
-                          <div className={styles.quotedQuoteContainer}>
-                            {(() => {
-                              const quotedMsg = messages.find(m => m.facebook_message_id === msg.reply_to_message_id);
-                              const textToRender = quotedMsg ? (
-                                quotedMsg.text?.startsWith("[image] ") ? "📷 [Hình ảnh]" : 
-                                quotedMsg.text?.startsWith("[file] ") && /\.(mp4|webm|ogg|mov)$/i.test(quotedMsg.text.substring(7)) ? "🎥 [Video]" :
-                                quotedMsg.text?.startsWith("[file] ") ? "📎 [Tập tin]" : 
-                                quotedMsg.text?.startsWith("[audio] ") ? "🎙️ [Tin nhắn thoại]" : 
-                                quotedMsg.text
-                              ) : "Tin nhắn đã bị gỡ";
-                              return (
-                                <div className={styles.quotedQuoteText}>
-                                  {textToRender}
-                                </div>
-                              );
-                            })()}
-                          </div>
-                        )}
-
-                        {renderMessageContent(msg.text)}
-
-                        {/* Reaction emoji badge */}
-                        {msg.reactions && (
-                          <div className={`${styles.reactionBadge} ${isOut ? styles.reactionBadgeOut : styles.reactionBadgeIn}`}>
-                            {msg.reactions}
-                          </div>
-                        )}
-
-                        <div style={{ 
-                          fontSize: "9px", 
-                          opacity: 0.6, 
-                          textAlign: isOut ? "right" : "left", 
-                          marginTop: "4px" 
-                        }}>
-                          {parseDate(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                        </div>
-                      </div>
-
-                      {/* Inbound hover utility buttons on the right */}
-                      {!isOut && showActions && (
-                        <div className={styles.bubbleActionsRight}>
-                          <button type="button" className={styles.bubbleActionBtn} onClick={() => setActiveReactionMenuId(reactionsMenuOpen ? null : msg.facebook_message_id)} title="Thả cảm xúc">😃</button>
-                          <button type="button" className={styles.bubbleActionBtn} onClick={() => setReplyingTo(msg)} title="Trả lời">↩️</button>
-                          <button type="button" className={styles.bubbleActionBtn} onClick={() => setActiveActionMenuId(actionMenuOpen ? null : msg.facebook_message_id)} title="Khác">⋮</button>
-                        </div>
-                      )}
-
-                      {/* Tooltip Quick Reaction Picker */}
-                      {reactionsMenuOpen && (
-                        <div className={`${styles.reactionTooltip} ${isOut ? styles.reactionTooltipOut : styles.reactionTooltipIn}`}>
-                          {["👍", "❤️", "😂", "😮", "😢", "😡"].map((emoji) => (
-                            <span
-                              key={emoji}
-                              className={styles.reactionTooltipEmoji}
-                              onClick={() => handleReactToMessage(msg.facebook_message_id, msg.reactions === emoji ? null : emoji)}
+                            <button
+                              type="button"
+                              className={`${styles.fbSendBtn} ${(commentReplies[notifId] || "").trim() ? styles.fbSendBtnActive : ""}`}
+                              onClick={() => handleReplyToComment(notifId, activeThread.page_id)}
+                              disabled={!(commentReplies[notifId] || "").trim()}
+                              title="Gửi bình luận"
                             >
-                              {emoji}
-                            </span>
+                              <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" /></svg>
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+              </>
+            ) : (
+              <>
+                {/* Chat Header */}
+                <div className={styles.chatHeader}>
+                  <button className={styles.mobileBackBtn} onClick={() => setActiveThread(null)} style={{ background: "none", color: "#0084ff", padding: "0 8px 0 0", marginRight: "4px" }}>
+                    <svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor"><path d="M15.41 16.59L10.83 12l4.58-4.59L14 6l-6 6 6 6 1.41-1.41z" /></svg>
+                  </button>
+                  <div className={styles.avatarWrapper} style={{ width: "38px", height: "38px" }}>
+                    {customerProfiles[activeThread.sender_id]?.avatar ? (
+                      <img src={customerProfiles[activeThread.sender_id].avatar} alt="" className={styles.avatar} />
+                    ) : (
+                      <span style={{ fontSize: "14px", fontWeight: 700, color: "#3b82f6" }}>
+                        {(customerProfiles[activeThread.sender_id]?.name || "KH").charAt(0).toUpperCase()}
+                      </span>
+                    )}
+                  </div>
+                  <div>
+                    <div className={styles.chatHeaderTitle}>
+                      {customerProfiles[activeThread.sender_id]?.name || `Khách hàng (${activeThread.sender_id.substring(0, 8)}...)`}
+                    </div>
+                    <div className={styles.chatHeaderSubtitle} style={{ fontSize: "12px", color: "rgba(255,255,255,0.6)" }}>
+                      PSID: {activeThread.sender_id} • Kênh nhận: {conversations.find((c) => c.page_id === activeThread.page_id)?.page_name || activeThread.page_id}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Chat Messages */}
+                <div className={styles.chatBody}>
+                  {messages.map((msg) => {
+                    const isOut = msg.direction === "outbound";
+                    const showActions = hoveredMessageId === msg.facebook_message_id;
+                    const reactionsMenuOpen = activeReactionMenuId === msg.facebook_message_id;
+                    const actionMenuOpen = activeActionMenuId === msg.facebook_message_id;
+
+                    return (
+                      <div
+                        key={msg.id}
+                        className={`${styles.messageRow} ${isOut ? styles.messageRowOutbound : styles.messageRowInbound}`}
+                        onMouseEnter={() => setHoveredMessageId(msg.facebook_message_id)}
+                        onMouseLeave={() => {
+                          setHoveredMessageId(null);
+                          setActiveReactionMenuId(null);
+                          setActiveActionMenuId(null);
+                        }}
+                        style={{ position: "relative" }}
+                      >
+                        {/* Outbound hover utility buttons on the left */}
+                        {isOut && showActions && (
+                          <div className={styles.bubbleActionsLeft}>
+                            <button type="button" className={styles.bubbleActionBtn} onClick={() => setActiveReactionMenuId(reactionsMenuOpen ? null : msg.facebook_message_id)} title="Thả cảm xúc">😃</button>
+                            <button type="button" className={styles.bubbleActionBtn} onClick={() => setReplyingTo(msg)} title="Trả lời">↩️</button>
+                            <button type="button" className={styles.bubbleActionBtn} onClick={() => setActiveActionMenuId(actionMenuOpen ? null : msg.facebook_message_id)} title="Khác">⋮</button>
+                          </div>
+                        )}
+
+                        <div className={`${styles.bubble} ${isOut ? styles.bubbleOutbound : styles.bubbleInbound}`}>
+                          {/* Quoted Reply Quote Container */}
+                          {msg.reply_to_message_id && (
+                            <div className={styles.quotedQuoteContainer}>
+                              {(() => {
+                                const quotedMsg = messages.find(m => m.facebook_message_id === msg.reply_to_message_id);
+                                const textToRender = quotedMsg ? (
+                                  quotedMsg.text?.startsWith("[image] ") ? "📷 [Hình ảnh]" :
+                                    quotedMsg.text?.startsWith("[file] ") && /\.(mp4|webm|ogg|mov)$/i.test(quotedMsg.text.substring(7)) ? "🎥 [Video]" :
+                                      quotedMsg.text?.startsWith("[file] ") ? "📎 [Tập tin]" :
+                                        quotedMsg.text?.startsWith("[audio] ") ? "🎙️ [Tin nhắn thoại]" :
+                                          quotedMsg.text
+                                ) : "Tin nhắn đã bị gỡ";
+                                return (
+                                  <div className={styles.quotedQuoteText}>
+                                    {textToRender}
+                                  </div>
+                                );
+                              })()}
+                            </div>
+                          )}
+
+                          {renderMessageContent(msg.text)}
+
+                          {/* Reaction emoji badge */}
+                          {msg.reactions && (
+                            <div className={`${styles.reactionBadge} ${isOut ? styles.reactionBadgeOut : styles.reactionBadgeIn}`}>
+                              {msg.reactions}
+                            </div>
+                          )}
+
+                          <div style={{
+                            fontSize: "9px",
+                            opacity: 0.6,
+                            textAlign: isOut ? "right" : "left",
+                            marginTop: "4px"
+                          }}>
+                            {parseDate(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </div>
+                        </div>
+
+                        {/* Inbound hover utility buttons on the right */}
+                        {!isOut && showActions && (
+                          <div className={styles.bubbleActionsRight}>
+                            <button type="button" className={styles.bubbleActionBtn} onClick={() => setActiveReactionMenuId(reactionsMenuOpen ? null : msg.facebook_message_id)} title="Thả cảm xúc">😃</button>
+                            <button type="button" className={styles.bubbleActionBtn} onClick={() => setReplyingTo(msg)} title="Trả lời">↩️</button>
+                            <button type="button" className={styles.bubbleActionBtn} onClick={() => setActiveActionMenuId(actionMenuOpen ? null : msg.facebook_message_id)} title="Khác">⋮</button>
+                          </div>
+                        )}
+
+                        {/* Tooltip Quick Reaction Picker */}
+                        {reactionsMenuOpen && (
+                          <div className={`${styles.reactionTooltip} ${isOut ? styles.reactionTooltipOut : styles.reactionTooltipIn}`}>
+                            {["👍", "❤️", "😂", "😮", "😢", "😡"].map((emoji) => (
+                              <span
+                                key={emoji}
+                                className={styles.reactionTooltipEmoji}
+                                onClick={() => handleReactToMessage(msg.facebook_message_id, msg.reactions === emoji ? null : emoji)}
+                              >
+                                {emoji}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* More Popover Context Menu (Gỡ, Chuyển tiếp, Báo cáo) */}
+                        {actionMenuOpen && (
+                          <div className={`${styles.actionContextMenu} ${isOut ? styles.actionContextMenuOut : styles.actionContextMenuIn}`}>
+                            <button type="button" className={styles.contextMenuItem} onClick={() => handleUnsendMessage(msg.facebook_message_id)}>Gỡ bỏ</button>
+                            <button type="button" className={styles.contextMenuItem} onClick={() => {
+                              setMessageToForward(msg);
+                              setShowForwardModal(true);
+                              setActiveActionMenuId(null);
+                            }}>Chuyển tiếp</button>
+                            <button type="button" className={styles.contextMenuItem} onClick={() => handleReportMessage(msg.facebook_message_id)}>Báo cáo</button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                  <div ref={chatEndRef} />
+                </div>
+
+                {/* Chat Footer / Input controls */}
+                <div className={styles.chatFooter}>
+                  {is24hBlocked ? (
+                    <div className={styles.warning24h}>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                        <line x1="12" y1="9" x2="12" y2="13" />
+                        <line x1="12" y1="17" x2="12.01" y2="17" />
+                      </svg>
+                      Vượt quá chính sách 24h của Facebook, không thể gửi tin nhắn phản hồi mới.
+                    </div>
+                  ) : timeRemainingText ? (
+                    <div style={{ fontSize: "11px", color: "#f59e0b", marginBottom: "8px", fontWeight: 600 }}>
+                      ⚠️ {timeRemainingText}
+                    </div>
+                  ) : null}
+
+                  {/* Reply Quote Preview Banner */}
+                  {replyingTo && (
+                    <div style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      background: "rgba(255, 255, 255, 0.05)",
+                      borderLeft: "4px solid #0084ff",
+                      padding: "8px 12px",
+                      borderRadius: "4px",
+                      marginBottom: "8px",
+                      fontSize: "12px",
+                      color: "var(--text-secondary)"
+                    }}>
+                      <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        Đang trả lời: <strong>{
+                          replyingTo.text?.startsWith("[image] ") ? "📷 [Hình ảnh]" :
+                            replyingTo.text?.startsWith("[file] ") && /\.(mp4|webm|ogg|mov)$/i.test(replyingTo.text.substring(7)) ? "🎥 [Video]" :
+                              replyingTo.text?.startsWith("[file] ") ? "📎 [Tập tin]" :
+                                replyingTo.text?.startsWith("[audio] ") ? "🎙️ [Tin nhắn thoại]" :
+                                  replyingTo.text
+                        }</strong>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setReplyingTo(null)}
+                        style={{ background: "none", border: "none", color: "#f87171", cursor: "pointer", fontWeight: 700 }}
+                      >
+                        Hủy
+                      </button>
+                    </div>
+                  )}
+
+                  {isRecording ? (
+                    <div style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      background: "rgba(239, 68, 68, 0.08)",
+                      border: "1px solid rgba(239, 68, 68, 0.2)",
+                      borderRadius: "20px",
+                      padding: "8px 16px",
+                      width: "100%",
+                      animation: "pulse-glow 2s infinite"
+                    }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                        <span style={{
+                          width: "8px",
+                          height: "8px",
+                          borderRadius: "50%",
+                          backgroundColor: "#ef4444",
+                          display: "inline-block",
+                          animation: "spin 1.5s linear infinite"
+                        }} />
+                        <span style={{ fontSize: "13px", fontWeight: 600, color: "#fca5a5" }}>
+                          Đang ghi âm: {Math.floor(recordingTime / 60).toString().padStart(2, '0')}:{(recordingTime % 60).toString().padStart(2, '0')}
+                        </span>
+                      </div>
+                      <div style={{ display: "flex", gap: "12px" }}>
+                        <button
+                          type="button"
+                          className={`${styles.btn} ${styles.btnSecondary}`}
+                          onClick={cancelRecording}
+                          style={{ padding: "6px 12px", fontSize: "11px", borderColor: "rgba(239, 68, 68, 0.3)", color: "#ef4444" }}
+                        >
+                          Hủy
+                        </button>
+                        <button
+                          type="button"
+                          className={`${styles.btn} ${styles.btnPrimary}`}
+                          onClick={stopRecording}
+                          style={{ padding: "6px 12px", fontSize: "11px", backgroundColor: "#ef4444" }}
+                        >
+                          Gửi ghi âm 🎙️
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <form onSubmit={handleSendMessage} className={styles.messengerInputBar}>
+
+                      {/* 1. Microphone icon */}
+                      <button
+                        type="button"
+                        className={`${styles.iconButton} ${is24hBlocked ? styles.iconButtonDisabled : ""}`}
+                        disabled={is24hBlocked}
+                        onClick={startRecording}
+                        title="Gửi tin nhắn thoại"
+                      >
+                        <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+                          <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3zm5.5 10a5.5 5.5 0 0 1-11 0v-1a.75.75 0 0 0-1.5 0v1a7 7 0 0 0 6.25 6.91v2.34H9a.75.75 0 0 0 0 1.5h6a.75.75 0 0 0 0-1.5h-2.25v-2.34A7 7 0 0 0 19.5 11v-1a.75.75 0 0 0-1.5 0v1z" />
+                        </svg>
+                      </button>
+
+                      {/* 2. Image icon (File Upload) */}
+                      <button
+                        type="button"
+                        className={`${styles.iconButton} ${is24hBlocked ? styles.iconButtonDisabled : ""}`}
+                        disabled={is24hBlocked}
+                        onClick={() => fileInputRef.current?.click()}
+                        title="Đính kèm ảnh hoặc tệp tin"
+                      >
+                        <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+                          <path d="M19 3H5a3 3 0 0 0-3 3v12a3 3 0 0 0 3 3h14a3 3 0 0 0 3-3V6a3 3 0 0 0-3-3zM5 4.5h14a1.5 1.5 0 0 1 1.5 1.5v7.44l-3.32-3.14a2.25 2.25 0 0 0-3.08 0l-3.9 3.7-2.18-1.92a2.25 2.25 0 0 0-3.04.05L3.5 13.91V6A1.5 1.5 0 0 1 5 4.5zM8.25 10.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z" />
+                        </svg>
+                      </button>
+
+                      {/* 3. Sticker icon */}
+                      <button
+                        type="button"
+                        className={`${styles.iconButton} ${is24hBlocked ? styles.iconButtonDisabled : ""}`}
+                        disabled={is24hBlocked}
+                        onClick={() => {
+                          setShowStickerPicker(!showStickerPicker);
+                          setShowGifPicker(false);
+                          setShowEmojiPicker(false);
+                        }}
+                        title="Gửi nhãn dán Stickers"
+                      >
+                        <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+                          <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm5.5 14.25c-.2.2-.45.3-.75.3a1.05 1.05 0 0 1-.75-.3L13 13.2l-3 3.05c-.2.2-.45.3-.75.3a1.05 1.05 0 0 1-.75-.3 1.05 1.05 0 0 1 0-1.5L11.5 11.7 8.5 8.65a1.05 1.05 0 0 1 0-1.5 1.05 1.05 0 0 1 1.5 0l3 3.05 3-3.05a1.05 1.05 0 0 1 1.5 0 1.05 1.05 0 0 1 0 1.5l-3 3.05 3 3.05c.4.4.4 1 .1 1.4z" />
+                        </svg>
+                      </button>
+
+                      {/* Sticker Popover */}
+                      {showStickerPicker && (
+                        <div className={styles.emojiPopover} style={{ gridTemplateColumns: "repeat(4, 1fr)", width: "300px", bottom: "58px", right: "80px" }}>
+                          {[
+                            "https://i.giphy.com/media/v1.Y2lkPTc5MGI3NjExM2Qwb2x5czV3YXR0Y21kMW92M2oxbmltM2V4cmU5bDB5b253b216ZCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9cw/l3q2zVr6cu95nF6O4/giphy.gif",
+                            "https://i.giphy.com/media/v1.Y2lkPTc5MGI3NjExM3Qwb2x5czV3YXR0Y21kMW92M2oxbmltM2V4cmU5bDB5b253b216ZCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9cw/3oz8xALRf1LTCX4YPS/giphy.gif",
+                            "https://i.giphy.com/media/v1.Y2lkPTc5MGI3NjExM3Qwb2x5czV3YXR0Y21kMW92M2oxbmltM2V4cmU5bDB5b253b216ZCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9cw/l0G18bM1hvitv68hy/giphy.gif",
+                            "https://i.giphy.com/media/v1.Y2lkPTc5MGI3NjExM3Qwb2x5czV3YXR0Y21kMW92M2oxbmltM2V4cmU5bDB5b253b216ZCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9cw/3o7TKSjRrfIPjei16M/giphy.gif",
+                            "https://i.giphy.com/media/v1.Y2lkPTc5MGI3NjExM3Qwb2x5czV3YXR0Y21kMW92M2oxbmltM2V4cmU5bDB5b253b216ZCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9cw/l0HlOBIP8K9U8V5qU/giphy.gif",
+                            "https://i.giphy.com/media/v1.Y2lkPTc5MGI3NjExM3Qwb2x5czV3YXR0Y21kMW92M2oxbmltM2V4cmU5bDB5b253b216ZCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9cw/3o7qDQ4kcSD1PLM3BK/giphy.gif",
+                            "https://i.giphy.com/media/v1.Y2lkPTc5MGI3NjExM3Qwb2x5czV3YXR0Y21kMW92M2oxbmltM2V4cmU5bDB5b253b216ZCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9cw/l3q2t2b2b1156820g/giphy.gif",
+                            "https://i.giphy.com/media/v1.Y2lkPTc5MGI3NjExM3Qwb2x5czV3YXR0Y21kMW92M2oxbmltM2V4cmU5bDB5b253b216ZCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9cw/3o7qE0gCO5JyA57iJG/giphy.gif"
+                          ].map((url, index) => (
+                            <img
+                              key={index}
+                              src={url}
+                              alt={`Sticker ${index}`}
+                              style={{ width: "60px", height: "60px", cursor: "pointer", objectFit: "contain" }}
+                              onClick={() => handleSendAttachmentUrl(url, "image")}
+                            />
                           ))}
                         </div>
                       )}
 
-                      {/* More Popover Context Menu (Gỡ, Chuyển tiếp, Báo cáo) */}
-                      {actionMenuOpen && (
-                        <div className={`${styles.actionContextMenu} ${isOut ? styles.actionContextMenuOut : styles.actionContextMenuIn}`}>
-                          <button type="button" className={styles.contextMenuItem} onClick={() => handleUnsendMessage(msg.facebook_message_id)}>Gỡ bỏ</button>
-                          <button type="button" className={styles.contextMenuItem} onClick={() => {
-                            setMessageToForward(msg);
-                            setShowForwardModal(true);
-                            setActiveActionMenuId(null);
-                          }}>Chuyển tiếp</button>
-                          <button type="button" className={styles.contextMenuItem} onClick={() => handleReportMessage(msg.facebook_message_id)}>Báo cáo</button>
-                        </div>
-                      )}
-                    </div>
-                  );
-                    })}
-                    <div ref={chatEndRef} />
-                  </div>
-
-                  {/* Chat Footer / Input controls */}
-                  <div className={styles.chatFooter}>
-                {is24hBlocked ? (
-                  <div className={styles.warning24h}>
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                      <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
-                      <line x1="12" y1="9" x2="12" y2="13" />
-                      <line x1="12" y1="17" x2="12.01" y2="17" />
-                    </svg>
-                    Vượt quá chính sách 24h của Facebook, không thể gửi tin nhắn phản hồi mới.
-                  </div>
-                ) : timeRemainingText ? (
-                  <div style={{ fontSize: "11px", color: "#f59e0b", marginBottom: "8px", fontWeight: 600 }}>
-                    ⚠️ {timeRemainingText}
-                  </div>
-                ) : null}
-
-                {/* Reply Quote Preview Banner */}
-                {replyingTo && (
-                  <div style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    background: "rgba(255, 255, 255, 0.05)",
-                    borderLeft: "4px solid #0084ff",
-                    padding: "8px 12px",
-                    borderRadius: "4px",
-                    marginBottom: "8px",
-                    fontSize: "12px",
-                    color: "var(--text-secondary)"
-                  }}>
-                    <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      Đang trả lời: <strong>{
-                        replyingTo.text?.startsWith("[image] ") ? "📷 [Hình ảnh]" : 
-                        replyingTo.text?.startsWith("[file] ") && /\.(mp4|webm|ogg|mov)$/i.test(replyingTo.text.substring(7)) ? "🎥 [Video]" :
-                        replyingTo.text?.startsWith("[file] ") ? "📎 [Tập tin]" : 
-                        replyingTo.text?.startsWith("[audio] ") ? "🎙️ [Tin nhắn thoại]" : 
-                        replyingTo.text
-                      }</strong>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setReplyingTo(null)}
-                      style={{ background: "none", border: "none", color: "#f87171", cursor: "pointer", fontWeight: 700 }}
-                    >
-                      Hủy
-                    </button>
-                  </div>
-                )}
-
-                {isRecording ? (
-                  <div style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    background: "rgba(239, 68, 68, 0.08)",
-                    border: "1px solid rgba(239, 68, 68, 0.2)",
-                    borderRadius: "20px",
-                    padding: "8px 16px",
-                    width: "100%",
-                    animation: "pulse-glow 2s infinite"
-                  }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                      <span style={{
-                        width: "8px",
-                        height: "8px",
-                        borderRadius: "50%",
-                        backgroundColor: "#ef4444",
-                        display: "inline-block",
-                        animation: "spin 1.5s linear infinite"
-                      }} />
-                      <span style={{ fontSize: "13px", fontWeight: 600, color: "#fca5a5" }}>
-                        Đang ghi âm: {Math.floor(recordingTime / 60).toString().padStart(2, '0')}:{(recordingTime % 60).toString().padStart(2, '0')}
-                      </span>
-                    </div>
-                    <div style={{ display: "flex", gap: "12px" }}>
+                      {/* 4. GIF icon */}
                       <button
                         type="button"
-                        className={`${styles.btn} ${styles.btnSecondary}`}
-                        onClick={cancelRecording}
-                        style={{ padding: "6px 12px", fontSize: "11px", borderColor: "rgba(239, 68, 68, 0.3)", color: "#ef4444" }}
-                      >
-                        Hủy
-                      </button>
-                      <button
-                        type="button"
-                        className={`${styles.btn} ${styles.btnPrimary}`}
-                        onClick={stopRecording}
-                        style={{ padding: "6px 12px", fontSize: "11px", backgroundColor: "#ef4444" }}
-                      >
-                        Gửi ghi âm 🎙️
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <form onSubmit={handleSendMessage} className={styles.messengerInputBar}>
-                    {/* Hidden File Input */}
-                    <input
-                      type="file"
-                      ref={fileInputRef}
-                      style={{ display: "none" }}
-                      onChange={handleFileChange}
-                      accept="image/*,video/*,audio/*,application/*"
-                    />
-
-                    {/* 1. Microphone icon */}
-                    <button
-                      type="button"
-                      className={`${styles.iconButton} ${is24hBlocked ? styles.iconButtonDisabled : ""}`}
-                      disabled={is24hBlocked}
-                      onClick={startRecording}
-                      title="Gửi tin nhắn thoại"
-                    >
-                      <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-                        <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3zm5.5 10a5.5 5.5 0 0 1-11 0v-1a.75.75 0 0 0-1.5 0v1a7 7 0 0 0 6.25 6.91v2.34H9a.75.75 0 0 0 0 1.5h6a.75.75 0 0 0 0-1.5h-2.25v-2.34A7 7 0 0 0 19.5 11v-1a.75.75 0 0 0-1.5 0v1z"/>
-                      </svg>
-                    </button>
-
-                    {/* 2. Image icon (File Upload) */}
-                    <button
-                      type="button"
-                      className={`${styles.iconButton} ${is24hBlocked ? styles.iconButtonDisabled : ""}`}
-                      disabled={is24hBlocked}
-                      onClick={() => fileInputRef.current?.click()}
-                      title="Đính kèm ảnh hoặc tệp tin"
-                    >
-                      <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-                        <path d="M19 3H5a3 3 0 0 0-3 3v12a3 3 0 0 0 3 3h14a3 3 0 0 0 3-3V6a3 3 0 0 0-3-3zM5 4.5h14a1.5 1.5 0 0 1 1.5 1.5v7.44l-3.32-3.14a2.25 2.25 0 0 0-3.08 0l-3.9 3.7-2.18-1.92a2.25 2.25 0 0 0-3.04.05L3.5 13.91V6A1.5 1.5 0 0 1 5 4.5zM8.25 10.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z"/>
-                      </svg>
-                    </button>
-
-                    {/* 3. Sticker icon */}
-                    <button
-                      type="button"
-                      className={`${styles.iconButton} ${is24hBlocked ? styles.iconButtonDisabled : ""}`}
-                      disabled={is24hBlocked}
-                      onClick={() => {
-                        setShowStickerPicker(!showStickerPicker);
-                        setShowGifPicker(false);
-                        setShowEmojiPicker(false);
-                      }}
-                      title="Gửi nhãn dán Stickers"
-                    >
-                      <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-                        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm5.5 14.25c-.2.2-.45.3-.75.3a1.05 1.05 0 0 1-.75-.3L13 13.2l-3 3.05c-.2.2-.45.3-.75.3a1.05 1.05 0 0 1-.75-.3 1.05 1.05 0 0 1 0-1.5L11.5 11.7 8.5 8.65a1.05 1.05 0 0 1 0-1.5 1.05 1.05 0 0 1 1.5 0l3 3.05 3-3.05a1.05 1.05 0 0 1 1.5 0 1.05 1.05 0 0 1 0 1.5l-3 3.05 3 3.05c.4.4.4 1 .1 1.4z"/>
-                      </svg>
-                    </button>
-
-                    {/* Sticker Popover */}
-                    {showStickerPicker && (
-                      <div className={styles.emojiPopover} style={{ gridTemplateColumns: "repeat(4, 1fr)", width: "300px", bottom: "58px", right: "80px" }}>
-                        {[
-                          "https://i.giphy.com/media/v1.Y2lkPTc5MGI3NjExM2Qwb2x5czV3YXR0Y21kMW92M2oxbmltM2V4cmU5bDB5b253b216ZCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9cw/l3q2zVr6cu95nF6O4/giphy.gif",
-                          "https://i.giphy.com/media/v1.Y2lkPTc5MGI3NjExM3Qwb2x5czV3YXR0Y21kMW92M2oxbmltM2V4cmU5bDB5b253b216ZCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9cw/3oz8xALRf1LTCX4YPS/giphy.gif",
-                          "https://i.giphy.com/media/v1.Y2lkPTc5MGI3NjExM3Qwb2x5czV3YXR0Y21kMW92M2oxbmltM2V4cmU5bDB5b253b216ZCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9cw/l0G18bM1hvitv68hy/giphy.gif",
-                          "https://i.giphy.com/media/v1.Y2lkPTc5MGI3NjExM3Qwb2x5czV3YXR0Y21kMW92M2oxbmltM2V4cmU5bDB5b253b216ZCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9cw/3o7TKSjRrfIPjei16M/giphy.gif",
-                          "https://i.giphy.com/media/v1.Y2lkPTc5MGI3NjExM3Qwb2x5czV3YXR0Y21kMW92M2oxbmltM2V4cmU5bDB5b253b216ZCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9cw/l0HlOBIP8K9U8V5qU/giphy.gif",
-                          "https://i.giphy.com/media/v1.Y2lkPTc5MGI3NjExM3Qwb2x5czV3YXR0Y21kMW92M2oxbmltM2V4cmU5bDB5b253b216ZCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9cw/3o7qDQ4kcSD1PLM3BK/giphy.gif",
-                          "https://i.giphy.com/media/v1.Y2lkPTc5MGI3NjExM3Qwb2x5czV3YXR0Y21kMW92M2oxbmltM2V4cmU5bDB5b253b216ZCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9cw/l3q2t2b2b1156820g/giphy.gif",
-                          "https://i.giphy.com/media/v1.Y2lkPTc5MGI3NjExM3Qwb2x5czV3YXR0Y21kMW92M2oxbmltM2V4cmU5bDB5b253b216ZCZlcD12MV9pbnRlcm5hbF9naWZfYnlfaWQmY3Q9cw/3o7qE0gCO5JyA57iJG/giphy.gif"
-                        ].map((url, index) => (
-                          <img
-                            key={index}
-                            src={url}
-                            alt={`Sticker ${index}`}
-                            style={{ width: "60px", height: "60px", cursor: "pointer", objectFit: "contain" }}
-                            onClick={() => handleSendAttachmentUrl(url, "image")}
-                          />
-                        ))}
-                      </div>
-                    )}
-
-                    {/* 4. GIF icon */}
-                    <button
-                      type="button"
-                      className={`${styles.iconButton} ${is24hBlocked ? styles.iconButtonDisabled : ""}`}
-                      disabled={is24hBlocked}
-                      onClick={() => {
-                        setShowGifPicker(!showGifPicker);
-                        setShowStickerPicker(false);
-                        setShowEmojiPicker(false);
-                      }}
-                      title="Gửi file GIF động"
-                    >
-                      <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-                        <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-8 8.5h-1.5V13h1.5v1.5H9.5c-.83 0-1.5-.67-1.5-1.5v-3c0-.83.67-1.5 1.5-1.5h1.5v1.5zm3 3H12.5v-6H14v6zm4-4.5h-2v1h1.5V11H16v3.5h-1.5v-6h3.5V11z"/>
-                      </svg>
-                    </button>
-
-                    {/* GIF Popover */}
-                    {showGifPicker && (
-                      <div className={styles.emojiPopover} style={{ gridTemplateColumns: "repeat(2, 1fr)", width: "320px", bottom: "58px", right: "50px" }}>
-                        {[
-                          "https://media.giphy.com/media/l3q2XhfQ8oCkm1K7m/giphy.gif",
-                          "https://media.giphy.com/media/xT0xezQGU5xCDJuCPe/giphy.gif",
-                          "https://media.giphy.com/media/dpK9kWc3YQH28/giphy.gif",
-                          "https://media.giphy.com/media/3o7qE1YN7aBOFPRw8E/giphy.gif",
-                          "https://media.giphy.com/media/26ufdipQqU2lhNA4g/giphy.gif",
-                          "https://media.giphy.com/media/c8UN4zmmuqmWc/giphy.gif",
-                          "https://media.giphy.com/media/12XMGIWtrHBl5e/giphy.gif",
-                          "https://media.giphy.com/media/kb9LpghG6iENa/giphy.gif"
-                        ].map((url, index) => (
-                          <img
-                            key={index}
-                            src={url}
-                            alt={`GIF ${index}`}
-                            style={{ width: "135px", height: "95px", cursor: "pointer", objectFit: "cover", borderRadius: "8px" }}
-                            onClick={() => handleSendAttachmentUrl(url, "image")}
-                          />
-                        ))}
-                      </div>
-                    )}
-
-                    {/* 5. Input container with rounded background & emoji picker trigger */}
-                    <div className={styles.inputContainer}>
-                      <input
-                        type="text"
-                        className={styles.messengerInput}
-                        placeholder={is24hBlocked ? "Phản hồi bị khóa (Quá hạn 24h)" : "Aa"}
-                        value={replyText}
-                        onChange={(e) => setReplyText(e.target.value)}
-                        disabled={is24hBlocked || isSending}
-                      />
-
-                      {/* Emoji Button inside Input */}
-                      <button
-                        type="button"
-                        className={styles.emojiButton}
+                        className={`${styles.iconButton} ${is24hBlocked ? styles.iconButtonDisabled : ""}`}
                         disabled={is24hBlocked}
                         onClick={() => {
-                          setShowEmojiPicker(!showEmojiPicker);
+                          setShowGifPicker(!showGifPicker);
                           setShowStickerPicker(false);
-                          setShowGifPicker(false);
+                          setShowEmojiPicker(false);
                         }}
-                        title="Chọn biểu tượng cảm xúc (Emoji)"
+                        title="Gửi file GIF động"
                       >
                         <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-                          <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-3.5-9c.83 0 1.5-.67 1.5-1.5S9.33 8 8.5 8 7 8.67 7 9.5s.67 1.5 1.5 1.5zm7 0c.83 0 1.5-.67 1.5-1.5S16.33 8 15.5 8 14 8.67 14 9.5s.67 1.5 1.5 1.5zm-3.5 5.5c2.33 0 4.31-1.46 5.11-3.5H6.89c.8 2.04 2.78 3.5 5.11 3.5z"/>
+                          <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-8 8.5h-1.5V13h1.5v1.5H9.5c-.83 0-1.5-.67-1.5-1.5v-3c0-.83.67-1.5 1.5-1.5h1.5v1.5zm3 3H12.5v-6H14v6zm4-4.5h-2v1h1.5V11H16v3.5h-1.5v-6h3.5V11z" />
                         </svg>
                       </button>
 
-                      {/* Tabbed Emoji Picker Popover */}
-                      {showEmojiPicker && (
-                        <div className={styles.emojiPopover} style={{ display: "flex", flexDirection: "column", width: "320px", maxHeight: "250px" }}>
-                          {/* Tabs */}
-                          <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid rgba(255,255,255,0.08)", paddingBottom: "6px", marginBottom: "8px" }}>
-                            {[
-                              { key: "smileys", label: "😃" },
-                              { key: "hearts", label: "❤️" },
-                              { key: "animals", label: "🐱" },
-                              { key: "food", label: "🍔" },
-                              { key: "objects", label: "⚽" }
-                            ].map((tab) => (
-                              <button
-                                key={tab.key}
-                                type="button"
-                                style={{
-                                  background: "none",
-                                  border: "none",
-                                  fontSize: "18px",
-                                  cursor: "pointer",
-                                  padding: "4px 8px",
-                                  borderRadius: "6px",
-                                  backgroundColor: emojiActiveTab === tab.key ? "rgba(255,255,255,0.12)" : "transparent"
-                                }}
-                                onClick={() => setEmojiActiveTab(tab.key)}
-                              >
-                                {tab.label}
-                              </button>
-                            ))}
-                          </div>
-                          {/* Grid */}
-                          <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: "6px", overflowY: "auto", maxHeight: "180px", paddingRight: "4px" }}>
-                            {
-                              {
-                                smileys: ["😀", "😃", "😄", "😁", "😆", "😅", "😂", "🤣", "😊", "😇", "🙂", "🙃", "😉", "😌", "😍", "🥰", "😘", "😗", "😙", "😚", "😋", "😛", "😝", "😜", "🤪", "🤨", "🧐", "🤓", "😎", "🥸", "🤩", "🥳", "😏", "😒", "😞", "😔", "😟", "😕", "🙁", "☹️"],
-                                hearts: ["👍", "👎", "👊", "✊", "🤛", "🤜", "🤞", "✌️", "🤟", "🤘", "👌", "🤌", "🤏", "👈", "👉", "👆", "👇", "☝️", "✋", "🤚", "🖐️", "🖖", "👋", "✍️", "👏", "🙌", "👐", "🤲", "🙏", "❤️", "🧡", "💛", "💚", "💙", "💜", "🖤", "🤍", "🤎", "💔", "❣️"],
-                                animals: ["🐶", "🐱", "🐭", "🐹", "🐰", "🦊", "🐻", "🐼", "🐨", "🐯", "🦁", "🐮", "🐷", "🐸", "🐵", "🐔", "🐧", "🐦", "🐤", "🦆", "🦅", "🦉", "🦇", "🐺", "🐗", "🦄", "🐝", "🐛", "🦋", "🐌", "🐞", "🐜", "🕷️", "🐢", "🐍", "🦎", "🐙", "🦑", "🐬", "🐠"],
-                                food: ["🍎", "🍊", "🍋", "🍌", "🍉", "🍇", "🍓", "🍒", "🍑", "🍍", "🥥", "🥝", "🍅", "🍆", "🥑", "🥦", "🥬", "🥒", "🌶️", "🌽", "🥕", "🍞", "🥐", "🥖", "🥞", "🧇", "🧀", "🍖", "🍗", "🥩", " Bacon", "🍔", "🍟", "🍕", "🌭", "🥪", "🌮", "🌯", "☕", "🍺"],
-                                objects: ["⚽", "🏀", "🏈", "⚾", "🥎", "🎾", "🎱", "🏓", "🥊", "🛹", "🚲", "🚗", "✈️", "🚀", "🛸", "⌚", "📱", "💻", "⌨️", "🖥️", "🖨️", "🖱️", "📷", "📸", "📹", "🎙️", "📻", "🎸", "🎹", "🥁", "🎨", "🎭", "🎮", "🎲", "🧩", "🎯", "🎳", "💡", "🔑", "🚩"]
-                              }[emojiActiveTab].map((emoji) => (
-                                <span
-                                  key={emoji}
-                                  className={styles.emojiItem}
-                                  onClick={() => setReplyText((prev) => prev + emoji)}
-                                >
-                                  {emoji}
-                                </span>
-                              ))
-                            }
-                          </div>
+                      {/* GIF Popover */}
+                      {showGifPicker && (
+                        <div className={styles.emojiPopover} style={{ gridTemplateColumns: "repeat(2, 1fr)", width: "320px", bottom: "58px", right: "50px" }}>
+                          {[
+                            "https://media.giphy.com/media/l3q2XhfQ8oCkm1K7m/giphy.gif",
+                            "https://media.giphy.com/media/xT0xezQGU5xCDJuCPe/giphy.gif",
+                            "https://media.giphy.com/media/dpK9kWc3YQH28/giphy.gif",
+                            "https://media.giphy.com/media/3o7qE1YN7aBOFPRw8E/giphy.gif",
+                            "https://media.giphy.com/media/26ufdipQqU2lhNA4g/giphy.gif",
+                            "https://media.giphy.com/media/c8UN4zmmuqmWc/giphy.gif",
+                            "https://media.giphy.com/media/12XMGIWtrHBl5e/giphy.gif",
+                            "https://media.giphy.com/media/kb9LpghG6iENa/giphy.gif"
+                          ].map((url, index) => (
+                            <img
+                              key={index}
+                              src={url}
+                              alt={`GIF ${index}`}
+                              style={{ width: "135px", height: "95px", cursor: "pointer", objectFit: "cover", borderRadius: "8px" }}
+                              onClick={() => handleSendAttachmentUrl(url, "image")}
+                            />
+                          ))}
                         </div>
                       )}
-                    </div>
 
-                    {/* 6. Send button (Paper airplane) */}
-                    <button
-                      type="submit"
-                      className={styles.btnSend}
-                      disabled={is24hBlocked || !replyText.trim() || isSending}
-                      title="Gửi tin nhắn"
-                    >
-                      <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor">
-                        <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
-                      </svg>
-                    </button>
-                  </form>
-                )}
+                      {/* 5. Input container with rounded background & emoji picker trigger */}
+                      <div className={styles.inputContainer}>
+                        <textarea
+                          ref={textareaRef}
+                          rows={1}
+                          className={styles.messengerInput}
+                          placeholder={is24hBlocked ? "Phản hồi bị khóa (Quá hạn 24h)" : "Aa"}
+                          value={replyText}
+                          onChange={(e) => setReplyText(e.target.value)}
+                          disabled={is24hBlocked || isSending}
+                        />
+
+                        {/* Emoji Button inside Input */}
+                        <button
+                          type="button"
+                          className={styles.emojiButton}
+                          disabled={is24hBlocked}
+                          onClick={() => {
+                            setShowEmojiPicker(!showEmojiPicker);
+                            setShowStickerPicker(false);
+                            setShowGifPicker(false);
+                          }}
+                          title="Chọn biểu tượng cảm xúc (Emoji)"
+                        >
+                          <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+                            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-3.5-9c.83 0 1.5-.67 1.5-1.5S9.33 8 8.5 8 7 8.67 7 9.5s.67 1.5 1.5 1.5zm7 0c.83 0 1.5-.67 1.5-1.5S16.33 8 15.5 8 14 8.67 14 9.5s.67 1.5 1.5 1.5zm-3.5 5.5c2.33 0 4.31-1.46 5.11-3.5H6.89c.8 2.04 2.78 3.5 5.11 3.5z" />
+                          </svg>
+                        </button>
+
+                        {/* Tabbed Emoji Picker Popover */}
+                        {showEmojiPicker && (
+                          <div className={styles.emojiPopover} style={{ display: "flex", flexDirection: "column", width: "320px", maxHeight: "250px" }}>
+                            {/* Tabs */}
+                            <div style={{ display: "flex", justifyContent: "space-between", borderBottom: "1px solid rgba(255,255,255,0.08)", paddingBottom: "6px", marginBottom: "8px" }}>
+                              {[
+                                { key: "smileys", label: "😃" },
+                                { key: "hearts", label: "❤️" },
+                                { key: "animals", label: "🐱" },
+                                { key: "food", label: "🍔" },
+                                { key: "objects", label: "⚽" }
+                              ].map((tab) => (
+                                <button
+                                  key={tab.key}
+                                  type="button"
+                                  style={{
+                                    background: "none",
+                                    border: "none",
+                                    fontSize: "18px",
+                                    cursor: "pointer",
+                                    padding: "4px 8px",
+                                    borderRadius: "6px",
+                                    backgroundColor: emojiActiveTab === tab.key ? "rgba(255,255,255,0.12)" : "transparent"
+                                  }}
+                                  onClick={() => setEmojiActiveTab(tab.key)}
+                                >
+                                  {tab.label}
+                                </button>
+                              ))}
+                            </div>
+                            {/* Grid */}
+                            <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: "6px", overflowY: "auto", maxHeight: "180px", paddingRight: "4px" }}>
+                              {
+                                {
+                                  smileys: ["😀", "😃", "😄", "😁", "😆", "😅", "😂", "🤣", "😊", "😇", "🙂", "🙃", "😉", "😌", "😍", "🥰", "😘", "😗", "😙", "😚", "😋", "😛", "😝", "😜", "🤪", "🤨", "🧐", "🤓", "😎", "🥸", "🤩", "🥳", "😏", "😒", "😞", "😔", "😟", "😕", "🙁", "☹️"],
+                                  hearts: ["👍", "👎", "👊", "✊", "🤛", "🤜", "🤞", "✌️", "🤟", "🤘", "👌", "🤌", "🤏", "👈", "👉", "👆", "👇", "☝️", "✋", "🤚", "🖐️", "🖖", "👋", "✍️", "👏", "🙌", "👐", "🤲", "🙏", "❤️", "🧡", "💛", "💚", "💙", "💜", "🖤", "🤍", "🤎", "💔", "❣️"],
+                                  animals: ["🐶", "🐱", "🐭", "🐹", "🐰", "🦊", "🐻", "🐼", "🐨", "🐯", "🦁", "🐮", "🐷", "🐸", "🐵", "🐔", "🐧", "🐦", "🐤", "🦆", "🦅", "🦉", "🦇", "🐺", "🐗", "🦄", "🐝", "🐛", "🦋", "🐌", "🐞", "🐜", "🕷️", "🐢", "🐍", "🦎", "🐙", "🦑", "🐬", "🐠"],
+                                  food: ["🍎", "🍊", "🍋", "🍌", "🍉", "🍇", "🍓", "🍒", "🍑", "🍍", "🥥", "🥝", "🍅", "🍆", "🥑", "🥦", "🥬", "🥒", "🌶️", "🌽", "🥕", "🍞", "🥐", "🥖", "🥞", "🧇", "🧀", "🍖", "🍗", "🥩", " Bacon", "🍔", "🍟", "🍕", "🌭", "🥪", "🌮", "🌯", "☕", "🍺"],
+                                  objects: ["⚽", "🏀", "🏈", "⚾", "🥎", "🎾", "🎱", "🏓", "🥊", "🛹", "🚲", "🚗", "✈️", "🚀", "🛸", "⌚", "📱", "💻", "⌨️", "🖥️", "🖨️", "🖱️", "📷", "📸", "📹", "🎙️", "📻", "🎸", "🎹", "🥁", "🎨", "🎭", "🎮", "🎲", "🧩", "🎯", "🎳", "💡", "🔑", "🚩"]
+                                }[emojiActiveTab].map((emoji) => (
+                                  <span
+                                    key={emoji}
+                                    className={styles.emojiItem}
+                                    onClick={() => setReplyText((prev) => prev + emoji)}
+                                  >
+                                    {emoji}
+                                  </span>
+                                ))
+                              }
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* 6. Send button (Paper airplane) */}
+                      <button
+                        type="submit"
+                        className={styles.btnSend}
+                        disabled={is24hBlocked || !replyText.trim() || isSending}
+                        title="Gửi tin nhắn"
+                      >
+                        <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor">
+                          <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
+                        </svg>
+                      </button>
+                    </form>
+                  )}
                 </div>
               </>
             )
@@ -1805,257 +1999,229 @@ export default function PageSyncCard() {
           )}
         </div>
 
-        {/* COLUMN 3: Right configuration & notifications panel */}
-        <div className={styles.rightPanel}>
+        {/* COLUMN 3: Right Panel (Hội Thoại & Thông Báo) */}
+        <div className={`${styles.rightPanel} ${activeThread ? styles.mobileHidden : ""}`}>
+          <div className={styles.mobilePageSelectContainer}>
+            <select
+              className={styles.mobilePageSelect}
+              value={selectedPageId}
+              onChange={(e) => setSelectedPageId(e.target.value)}
+            >
+              <option value="all">🌟 Tất cả các Trang</option>
+              {sortedDbPages.map(page => (
+                <option key={page.id} value={page.page_id}>
+                  {page.page_name} {pageUnreadCounts[page.page_id] ? `(${pageUnreadCounts[page.page_id]})` : ''}
+                </option>
+              ))}
+            </select>
+            <button className={styles.mobileConfigBtn} onClick={() => setShowConfigModal(true)} title="Cấu hình">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+                <path d="M19.14,12.94c0.04-0.3,0.06-0.61,0.06-0.94c0-0.32-0.02-0.64-0.06-0.94l2.03-1.58c0.18-0.14,0.23-0.41,0.12-0.61 l-1.92-3.32c-0.12-0.22-0.37-0.29-0.59-0.22l-2.39,0.96c-0.5-0.38-1.03-0.7-1.62-0.94L14.4,2.81c-0.04-0.24-0.24-0.41-0.48-0.41 h-3.84c-0.24,0-0.43,0.17-0.47,0.41L9.25,5.35C8.66,5.59,8.12,5.92,7.63,6.29L5.24,5.33c-0.22-0.08-0.47,0-0.59,0.22L2.73,8.87 C2.62,9.08,2.66,9.34,2.86,9.48l2.03,1.58C4.84,11.36,4.8,11.69,4.8,12s0.02,0.64,0.06,0.94l-2.03,1.58 c-0.18,0.14-0.23,0.41-0.12,0.61l1.92,3.32c0.12,0.22,0.37,0.29,0.59,0.22l2.39-0.96c0.5,0.38,1.03,0.7,1.62,0.94l0.36,2.54 c0.05,0.24,0.24,0.41,0.48,0.41h3.84c0.24,0,0.43-0.17,0.47-0.41l0.36-2.54c0.59-0.24,1.13-0.56,1.62-0.94l2.39,0.96 c0.22,0.08,0.47,0,0.59-0.22l1.92-3.32c0.12-0.22,0.07-0.49-0.12-0.61L19.14,12.94z M12,15.6c-1.98,0-3.6-1.62-3.6-3.6 s1.62-3.6,3.6-3.6s3.6,1.62,3.6,3.6S13.98,15.6,12,15.6z" />
+              </svg>
+            </button>
+          </div>
           <div className={styles.tabsContainer}>
             <button
-              className={`${styles.tabButton} ${activeRightTab === "config" ? styles.tabButtonActive : ""}`}
-              onClick={() => setActiveRightTab("config")}
+              className={`${styles.tabButton} ${activeRightTab === "conversations" ? styles.tabButtonActive : ""}`}
+              onClick={() => setActiveRightTab("conversations")}
             >
-              Cấu hình
+              HỘI THOẠI {unreadThreadsCount > 0 && `(${unreadThreadsCount})`}
             </button>
             <button
               className={`${styles.tabButton} ${activeRightTab === "notifications" ? styles.tabButtonActive : ""}`}
               onClick={() => setActiveRightTab("notifications")}
             >
-              Thông báo {unreadNotifsCount > 0 && `(${unreadNotifsCount})`}
+              THÔNG BÁO {unreadNotifsCount > 0 && `(${unreadNotifsCount})`}
             </button>
           </div>
 
-          <div className={styles.rightPanelBody}>
-            {/* CONFIG TAB */}
-            {activeRightTab === "config" && (
-              <div style={{ display: "flex", flexDirection: "column", gap: "16px", flexGrow: 1 }}>
-                
-                {/* Access Token Manager */}
-                <div className={styles.configSection}>
-                  <div className={styles.formGroup}>
-                    <label className={styles.label}>Facebook User Token (Short/Long-lived)</label>
-                    <input
-                      type="password"
-                      className={styles.input}
-                      value={customAccessToken}
-                      onChange={(e) => setCustomAccessToken(e.target.value)}
-                      placeholder="Dán mã EAA... tại đây"
-                    />
-                  </div>
-                  
-                  <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
-                    <button
-                      className={`${styles.btn} ${styles.btnPrimary}`}
-                      onClick={handleSyncPages}
-                      disabled={isLoading || isResetting}
-                      style={{ flex: 1 }}
-                    >
-                      {isLoading ? "Đang đồng bộ..." : "Đồng bộ Trang"}
-                    </button>
-                  </div>
+          <div className={styles.rightPanelBody} style={{ padding: 0 }}>
+            {activeRightTab === "conversations" && (
+              <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+                <div className={styles.filterTabs}>
+                  <button className={`${styles.filterTab} ${chatFilter === "all" ? styles.filterTabActive : ""}`} onClick={() => setChatFilter("all")}>Tất cả</button>
+                  <button className={`${styles.filterTab} ${chatFilter === "unread" ? styles.filterTabActive : ""}`} onClick={() => setChatFilter("unread")}>Chưa xem</button>
+                  <button className={`${styles.filterTab} ${chatFilter === "unreplied" ? styles.filterTabActive : ""}`} onClick={() => setChatFilter("unreplied")}>Chưa trả lời</button>
                 </div>
 
-                {/* Exchanged profile status */}
-                {facebookUserId && (
-                  <div style={{
-                    fontSize: "12px",
-                    background: "rgba(16, 185, 129, 0.08)",
-                    border: "1px solid rgba(16, 185, 129, 0.2)",
-                    padding: "10px",
-                    borderRadius: "8px",
-                    color: "#a7f3d0",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "6px"
-                  }}>
-                    <span className={`${styles.statusIndicator} ${styles.statusIndicatorActive}`} />
-                    <span>User ID: <strong>{facebookUserId}</strong> (Exchanged)</span>
-                  </div>
-                )}
-
-
-
-                {/* Database wipes */}
-                {(facebookUserId || dbPages.length > 0) && (
-                  <button
-                    className={`${styles.btn} ${styles.btnSecondary}`}
-                    onClick={handleResetDatabase}
-                    disabled={isLoading || isResetting}
-                    style={{
-                      marginTop: "auto",
-                      borderColor: "rgba(239, 68, 68, 0.2)",
-                      color: "#fca5a5",
-                      background: "rgba(239, 68, 68, 0.04)"
-                    }}
-                  >
-                    {isResetting ? "Đang xóa..." : "Reset Dữ Liệu"}
-                  </button>
-                )}
-                
-                {/* Synced pages list count */}
-                <div className={styles.pageCountSummary}>
-                  <span className={styles.countLabel}>Số Fanpage đã liên kết</span>
-                  <span className={styles.countBadge}>{dbPages.length} Pages</span>
-                </div>
-
-                {/* DB Pages Scroll list */}
-                <div className={styles.listContainer} style={{ maxHeight: "150px", overflowY: "auto" }}>
-                  {dbPages.map((page) => (
-                    <div key={page.id} className={styles.pageCard}>
-                      <div className={styles.pageLeft}>
-                        <div className={styles.avatarWrapper} style={{ width: "24px", height: "24px" }}>
-                          {page.avatar_url ? (
-                            <img src={page.avatar_url} alt="" className={styles.avatar} />
-                          ) : (
-                            <span style={{ fontSize: "10px", fontWeight: 700, color: "#3b82f6" }}>
-                              {page.page_name.charAt(0)}
-                            </span>
-                          )}
-                        </div>
-                        <span className={styles.pageName}>{page.page_name}</span>
-                      </div>
-                      <div className={`${styles.statusIndicator} ${styles.statusIndicatorActive}`} />
+                <div className={styles.threadList}>
+                  {allThreads.length === 0 ? (
+                    <div style={{ padding: "20px", color: "var(--text-muted)", fontSize: "12px", textAlign: "center" }}>
+                      Không có hội thoại nào.
                     </div>
-                  ))}
+                  ) : (
+                    allThreads.map((thread) => {
+                      const isActive = activeThread?.type !== "comment" && activeThread?.page_id === thread.page_id && activeThread?.sender_id === thread.sender_id;
+                      const customerName = customerProfiles[thread.sender_id]?.name || `KH: ${thread.sender_id?.substring(0, 8) || "Unknown"}...`;
+
+                      return (
+                        <div
+                          key={thread.key}
+                          className={`${styles.threadItem} ${isActive ? styles.threadItemActive : ""}`}
+                          onClick={() => {
+                            setActiveThread({ type: "chat", page_id: thread.page_id, sender_id: thread.sender_id });
+                            markChatRead(thread.page_id, thread.sender_id);
+                          }}
+                          style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}
+                        >
+                          <div style={{ display: "flex", flexDirection: "column", gap: "6px", flex: 1, minWidth: 0 }}>
+                            <div className={styles.threadMeta}>
+                              <span className={styles.threadSender} style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+                                <span style={{ fontSize: "9px", padding: "1px 5px", borderRadius: "4px", background: "rgba(59, 130, 246, 0.2)", color: "#60a5fa", fontWeight: 700 }}>
+                                  💬 Chat
+                                </span>
+                                <span>{customerName}</span>
+                              </span>
+                              <span className={styles.threadTime}>
+                                {parseDate(thread.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                              </span>
+                            </div>
+                            <div className={styles.threadPreview}>
+                              <span style={{ fontWeight: thread.is_read ? "normal" : "bold", color: thread.is_read ? "inherit" : "#fff" }}>
+                                {thread.preview}
+                              </span>
+                            </div>
+                            <div style={{ display: "flex", gap: "6px", fontSize: "10px", alignItems: "center", marginTop: "2px" }}>
+                              <div className={styles.threadPageBadge}>
+                                {thread.page_name}
+                              </div>
+                              {!thread.is_read && <span style={{ color: "#60a5fa" }}>🔵 Chưa xem</span>}
+                              {thread.is_replied && <span style={{ color: "#34d399" }}>✔ Đã trả lời</span>}
+                            </div>
+                          </div>
+                          {!thread.is_read && <div className={`${styles.statusIndicator} ${styles.statusIndicatorActive}`} style={{ marginLeft: "12px" }} />}
+                        </div>
+                      );
+                    })
+                  )}
                 </div>
               </div>
             )}
 
             {/* NOTIFICATIONS TAB */}
             {activeRightTab === "notifications" && (
-              <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+              <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
                 <div className={styles.filterTabs}>
                   <button className={`${styles.filterTab} ${notificationFilter === "all" ? styles.filterTabActive : ""}`} onClick={() => setNotificationFilter("all")}>Tất cả</button>
                   <button className={`${styles.filterTab} ${notificationFilter === "unread" ? styles.filterTabActive : ""}`} onClick={() => setNotificationFilter("unread")}>Chưa xem</button>
                   <button className={`${styles.filterTab} ${notificationFilter === "unreplied" ? styles.filterTabActive : ""}`} onClick={() => setNotificationFilter("unreplied")}>Chưa trả lời</button>
                 </div>
-                {filteredNotifications.length === 0 ? (
-                  <div className={styles.emptyState}>
-                    <svg className={styles.emptyIcon} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M14.857 17.082a9.049 9.049 0 01-5.116-2.28 9 9 0 000-11.602 9.049 9.049 0 015.116-2.28m0 16.162a9 9 0 01-5.116 2.28m5.116-18.442a9 9 0 015.116 2.28m-5.116 2.28a9 9 0 000 11.602" />
-                    </svg>
-                    <span>Không có thông báo nào thỏa mãn bộ lọc.</span>
-                  </div>
-                ) : (
-                  filteredNotifications.map((notif) => {
-                    const isComment = notif.title.includes("bình luận:");
-                    return (
-                      <div
-                        key={notif.id}
-                        className={styles.notifCard}
-                        onClick={() => {
-                          markNotificationRead(notif.facebook_notification_id);
-                          if (isComment) {
-                            setActiveThread({
-                              type: "comment",
-                              page_id: notif.page_id,
-                              sender_id: notif.facebook_notification_id,
-                              comment_id: notif.facebook_notification_id,
-                              title: notif.title,
-                              page_name: notif.page_name
-                            });
-                          } else if (notif.link) {
-                            window.open(notif.link, "_blank");
-                          }
-                        }}
-                        title="Nhấp chuột để mở bài viết trên Facebook"
-                      >
-                        <div className={styles.notifContent}>
-                          <div className={styles.notifTitle}>{notif.title}</div>
-                          <div className={styles.notifMeta}>
-                            <span>Trang: <strong>{notif.page_name}</strong></span>
-                            <span>{parseDate(notif.created_time).toLocaleString()}</span>
+                <div className={styles.threadList} style={{ flexGrow: 1, overflowY: "auto", padding: "8px" }}>
+                  {filteredNotifications.length === 0 ? (
+                    <div className={styles.emptyState} style={{ marginTop: '20px' }}>
+                      <svg className={styles.emptyIcon} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M14.857 17.082a9.049 9.049 0 01-5.116-2.28 9 9 0 000-11.602 9.049 9.049 0 015.116-2.28m0 16.162a9 9 0 01-5.116 2.28m5.116-18.442a9 9 0 015.116 2.28m-5.116 2.28a9 9 0 000 11.602" />
+                      </svg>
+                      <span>Không có thông báo nào.</span>
+                    </div>
+                  ) : (
+                    filteredNotifications.map((notif) => {
+                      const isComment = notif.title.includes("bình luận:");
+                      return (
+                        <div
+                          key={notif.id}
+                          className={styles.notifCard}
+                          onClick={() => {
+                            markNotificationRead(notif.facebook_notification_id);
+                            if (isComment) {
+                              setActiveThread({
+                                type: "comment",
+                                page_id: notif.page_id,
+                                sender_id: notif.facebook_notification_id,
+                                comment_id: notif.facebook_notification_id,
+                                title: notif.title,
+                                page_name: notif.page_name,
+                              });
+                            } else if (notif.link) {
+                              window.open(notif.link, "_blank");
+                            }
+                          }}
+                        >
+                          <div className={styles.notifContent}>
+                            <div className={styles.notifTitle}>
+                              {!notif.unread && <span style={{ color: "#34d399", marginRight: "4px" }}>✓</span>}
+                              {notif.title}
+                            </div>
+                            <div className={styles.notifTime}>
+                              {parseDate(notif.created_time).toLocaleString()} - {notif.page_name}
+                            </div>
+                            <div style={{ display: "flex", gap: "6px", fontSize: "10px", marginTop: "4px" }}>
+                              {notif.unread && <span style={{ color: "#60a5fa" }}>🔵 Chưa xem</span>}
+                              {notif.is_replied && <span style={{ color: "#34d399" }}>✔ Đã trả lời</span>}
+                            </div>
                           </div>
-                          <div style={{ display: "flex", gap: "6px", fontSize: "10px", marginTop: "6px" }}>
-                            {notif.unread && <span style={{ display: "flex", alignItems: "center", gap: "3px", color: "#60a5fa" }}>🔵 Chưa xem</span>}
-                            {notif.is_replied && <span style={{ display: "flex", alignItems: "center", gap: "3px", color: "#34d399" }}>✔ Đã trả lời</span>}
-                          </div>
+                          {notif.unread && <div className={`${styles.statusIndicator} ${styles.statusIndicatorActive}`} />}
                         </div>
-                      </div>
-                    );
-                  })
-                )}
+                      );
+                    })
+                  )}
+                </div>
               </div>
             )}
           </div>
         </div>
       </div>
+      {/* CONFIG MODAL */}
+      {showConfigModal && (
+        <div className={styles.modalOverlay} onClick={() => setShowConfigModal(false)}>
+          <div className={styles.modalContent} onClick={(e) => e.stopPropagation()}>
+            <div className={styles.modalHeader}>
+              <span>Quản lý Kết nối Facebook</span>
+              <button className={styles.modalCloseBtn} onClick={() => setShowConfigModal(false)}>×</button>
+            </div>
 
-      {/* Forward Message Modal Dialog */}
-    {showForwardModal && messageToForward && (
-      <div style={{
-        position: "fixed",
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        backgroundColor: "rgba(0,0,0,0.6)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        zIndex: 9999,
-        backdropFilter: "blur(4px)"
-      }}>
-        <div style={{
-          backgroundColor: "var(--bg-secondary)",
-          border: "1px solid var(--border-glass)",
-          borderRadius: "16px",
-          padding: "20px",
-          width: "350px",
-          boxShadow: "0 10px 25px rgba(0,0,0,0.5)"
-        }}>
-          <h4 style={{ margin: "0 0 12px 0", color: "var(--text-primary)" }}>Chuyển tiếp tin nhắn</h4>
-          <div style={{
-            fontSize: "12px",
-            color: "var(--text-secondary)",
-            background: "rgba(255,255,255,0.03)",
-            padding: "8px 12px",
-            borderRadius: "8px",
-            marginBottom: "16px",
-            maxHeight: "60px",
-            overflowY: "auto"
-          }}>
-            {messageToForward.text?.startsWith("[image]") ? "📷 [Hình ảnh]" : messageToForward.text?.startsWith("[file]") ? "📎 [Tập tin]" : messageToForward.text?.startsWith("[audio]") ? "🎙️ [Tin nhắn thoại]" : messageToForward.text}
-          </div>
-          <p style={{ fontSize: "11px", color: "var(--text-muted)", marginBottom: "8px" }}>Chọn cuộc trò chuyện để gửi:</p>
-          <div style={{ maxHeight: "180px", overflowY: "auto", display: "flex", flexDirection: "column", gap: "6px", marginBottom: "16px" }}>
-            {conversations.map((c) => (
-              <button
-                key={`${c.page_id}-${c.sender_id}`}
-                type="button"
-                onClick={() => handleForwardMessage(c.page_id, c.sender_id)}
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  padding: "8px 12px",
-                  background: "rgba(255,255,255,0.05)",
-                  border: "1px solid var(--border-glass)",
-                  borderRadius: "8px",
-                  color: "var(--text-primary)",
-                  textAlign: "left",
-                  cursor: "pointer",
-                  fontSize: "12px"
-                }}
-              >
-                <span>KH: {c.sender_id.substring(5, 12)}... ({c.page_name})</span>
-                <span style={{ color: "#3b82f6", fontWeight: 600 }}>Gửi</span>
-              </button>
-            ))}
-          </div>
-          <div style={{ display: "flex", justifyContent: "flex-end" }}>
+            <div className={styles.formGroup}>
+              <label className={styles.label}>FACEBOOK USER TOKEN (SHORT/LONG-LIVED)</label>
+              <input
+                type="password"
+                className={styles.input}
+                value={customAccessToken}
+                onChange={(e) => setCustomAccessToken(e.target.value)}
+                placeholder="Dán mã EAA... tại đây"
+              />
+            </div>
+
             <button
-              type="button"
-              className={`${styles.btn} ${styles.btnSecondary}`}
-              onClick={() => {
-                setShowForwardModal(false);
-                setMessageToForward(null);
-              }}
-              style={{ padding: "6px 12px", fontSize: "12px" }}
+              className={`${styles.btn} ${styles.btnPrimary}`}
+              onClick={handleSyncPages}
+              disabled={isLoading || isResetting}
+              style={{ width: '100%', padding: '12px' }}
             >
-              Hủy bỏ
+              {isLoading ? "Đang đồng bộ..." : "Đồng bộ Trang"}
             </button>
+
+            {facebookUserId && (
+              <div style={{
+                fontSize: "12px",
+                background: "rgba(16, 185, 129, 0.08)",
+                border: "1px solid rgba(16, 185, 129, 0.2)",
+                padding: "10px",
+                borderRadius: "8px",
+                color: "#a7f3d0",
+                display: "flex",
+                alignItems: "center",
+                gap: "6px",
+                marginTop: "4px"
+              }}>
+                <span className={`${styles.statusIndicator} ${styles.statusIndicatorActive}`} />
+                <span>User ID: <strong>{facebookUserId}</strong> (Exchanged)</span>
+              </div>
+            )}
+
+            <button
+              className={`${styles.btn} ${styles.btnSecondary}`}
+              onClick={handleEnablePush}
+              style={{ width: '100%', padding: '12px', marginTop: '12px', background: 'rgba(59, 130, 246, 0.1)', color: '#3b82f6', border: '1px solid rgba(59, 130, 246, 0.3)' }}
+            >
+              🔔 Bật Thông báo đẩy (Push Notifications)
+            </button>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '16px' }}>
+              <button className={`${styles.btn} ${styles.btnSecondary}`} onClick={() => setShowConfigModal(false)}>Đóng</button>
+            </div>
           </div>
         </div>
-      </div>
-    )}
+      )}
     </div>
   );
 }

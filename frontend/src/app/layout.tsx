@@ -4,6 +4,7 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Omnichannel Page Sync - Sales Management",
   description: "Synchronize your Facebook pages effortlessly with our Omnichannel system.",
+  manifest: "/manifest.json",
 };
 
 export default function RootLayout({

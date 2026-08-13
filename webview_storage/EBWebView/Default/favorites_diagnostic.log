@@ -1,0 +1,141 @@
+2026-08-01 10:09:26.875: [INFO] OnDoneLoading sync enabled: 0
+2026-08-01 10:15:21.654: [INFO] OnDoneLoading sync enabled: 0
+2026-08-01 10:17:15.148: [INFO] OnDoneLoading sync enabled: 0
+2026-08-01 10:20:00.196: [INFO] OnDoneLoading sync enabled: 0
+2026-08-01 10:37:43.332: [INFO] OnDoneLoading sync enabled: 0
+2026-08-01 10:41:58.536: [INFO] OnDoneLoading sync enabled: 0
+2026-08-01 10:44:32.921: [INFO] OnDoneLoading sync enabled: 0
+2026-08-01 11:02:13.524: [INFO] OnDoneLoading sync enabled: 0
+2026-08-01 11:43:59.727: [INFO] OnDoneLoading sync enabled: 0
+2026-08-03 06:57:47.768: [INFO] OnDoneLoading sync enabled: 0
+2026-08-03 07:28:11.764: [INFO] OnDoneLoading sync enabled: 0
+2026-08-03 07:30:23.513: [INFO] OnDoneLoading sync enabled: 0
+2026-08-03 07:30:47.432: [INFO] OnDoneLoading sync enabled: 0
+2026-08-03 09:43:39.399: [INFO] OnDoneLoading sync enabled: 0
+2026-08-04 02:40:16.161: [INFO] OnDoneLoading sync enabled: 0
+2026-08-04 04:04:27.773: [INFO] OnDoneLoading sync enabled: 0
+2026-08-04 04:52:13.389: [INFO] OnDoneLoading sync enabled: 0
+2026-08-04 06:41:41.837: [INFO] OnDoneLoading sync enabled: 0
+2026-08-04 09:11:13.638: [INFO] OnDoneLoading sync enabled: 0
+2026-08-04 10:49:13.778: [INFO] OnDoneLoading sync enabled: 0
+2026-08-04 14:46:37.282: [INFO] OnDoneLoading sync enabled: 0
+2026-08-04 18:11:33.288: [INFO] OnDoneLoading sync enabled: 0
+2026-08-05 03:54:47.671: [INFO] CurrentProfilePath: D:\tool_facebook_chat_page\webview_storage\EBWebView\Default
+2026-08-05 03:54:47.671: [INFO] Profiles total count: 1
+2026-08-05 03:54:47.671: [INFO] Profile: name=Profile 1 path=D:\tool_facebook_chat_page\webview_storage\EBWebView\Default lastActive=2026-08-04T19:18:25.192Z
+2026-08-05 03:54:47.671: [INFO] LastUsedProfileDir: D:\tool_facebook_chat_page\webview_storage\EBWebView\Default
+2026-08-05 03:54:47.671: [INFO] MostRecentlyActiveProfile: name=Profile 1 path=D:\tool_facebook_chat_page\webview_storage\EBWebView\Default lastActive=2026-08-04T19:18:25.192Z
+2026-08-05 03:54:47.671: [INFO] OnDoneLoading sync enabled: 0
+2026-08-05 03:54:47.671: [INFO] BookmarkModelLoaded, ids_reassigned: 0
+2026-08-05 03:54:47.671: [INFO] BookmarksLoadDropped droppedNodes=0
+2026-08-05 03:54:47.671: [INFO] BookmarksSnapshot Startup total=0 bar=0 other=0 mobile=0 showBar=0 showBarNTP=1
+2026-08-05 06:11:00.243: [INFO] BookmarksSnapshot Shutdown total=0 bar=0 other=0 mobile=0 showBar=0 showBarNTP=1
+2026-08-05 06:11:25.654: [INFO] CurrentProfilePath: D:\tool_facebook_chat_page\webview_storage\EBWebView\Default
+2026-08-05 06:11:25.654: [INFO] Profiles total count: 1
+2026-08-05 06:11:25.654: [INFO] Profile: name=Profile 1 path=D:\tool_facebook_chat_page\webview_storage\EBWebView\Default lastActive=2026-08-05T06:09:19.691Z
+2026-08-05 06:11:25.654: [INFO] LastUsedProfileDir: D:\tool_facebook_chat_page\webview_storage\EBWebView\Default
+2026-08-05 06:11:25.655: [INFO] MostRecentlyActiveProfile: name=Profile 1 path=D:\tool_facebook_chat_page\webview_storage\EBWebView\Default lastActive=2026-08-05T06:09:19.691Z
+2026-08-05 06:11:25.655: [INFO] OnDoneLoading sync enabled: 0
+2026-08-05 06:11:25.655: [INFO] BookmarkModelLoaded, ids_reassigned: 0
+2026-08-05 06:11:25.655: [INFO] BookmarksLoadDropped droppedNodes=0
+2026-08-05 06:11:25.655: [INFO] BookmarksSnapshot Startup total=0 bar=0 other=0 mobile=0 showBar=0 showBarNTP=1
+2026-08-05 07:08:50.890: [INFO] BookmarksSnapshot Shutdown total=0 bar=0 other=0 mobile=0 showBar=0 showBarNTP=1
+2026-08-05 07:09:05.761: [INFO] CurrentProfilePath: D:\tool_facebook_chat_page\webview_storage\EBWebView\Default
+2026-08-05 07:09:05.761: [INFO] Profiles total count: 1
+2026-08-05 07:09:05.762: [INFO] Profile: name=Profile 1 path=D:\tool_facebook_chat_page\webview_storage\EBWebView\Default lastActive=2026-08-05T06:26:56.457Z
+2026-08-05 07:09:05.762: [INFO] LastUsedProfileDir: D:\tool_facebook_chat_page\webview_storage\EBWebView\Default
+2026-08-05 07:09:05.762: [INFO] MostRecentlyActiveProfile: name=Profile 1 path=D:\tool_facebook_chat_page\webview_storage\EBWebView\Default lastActive=2026-08-05T06:26:56.457Z
+2026-08-05 07:09:05.762: [INFO] OnDoneLoading sync enabled: 0
+2026-08-05 07:09:05.762: [INFO] BookmarkModelLoaded, ids_reassigned: 0
+2026-08-05 07:09:05.762: [INFO] BookmarksLoadDropped droppedNodes=0
+2026-08-05 07:09:05.762: [INFO] BookmarksSnapshot Startup total=0 bar=0 other=0 mobile=0 showBar=0 showBarNTP=1
+2026-08-06 05:03:38.853: [INFO] BookmarksSnapshot Shutdown total=0 bar=0 other=0 mobile=0 showBar=0 showBarNTP=1
+2026-08-10 08:54:10.099: [INFO] CurrentProfilePath: D:\tool_facebook_chat_page\webview_storage\EBWebView\Default
+2026-08-10 08:54:10.099: [INFO] Profiles total count: 1
+2026-08-10 08:54:10.100: [INFO] Profile: name=Profile 1 path=D:\tool_facebook_chat_page\webview_storage\EBWebView\Default lastActive=2026-08-06T03:06:32.057Z
+2026-08-10 08:54:10.100: [INFO] LastUsedProfileDir: D:\tool_facebook_chat_page\webview_storage\EBWebView\Default
+2026-08-10 08:54:10.100: [INFO] MostRecentlyActiveProfile: name=Profile 1 path=D:\tool_facebook_chat_page\webview_storage\EBWebView\Default lastActive=2026-08-06T03:06:32.057Z
+2026-08-10 08:54:10.100: [INFO] OnDoneLoading sync enabled: 0
+2026-08-10 08:54:10.100: [INFO] BookmarkModelLoaded, ids_reassigned: 0
+2026-08-10 08:54:10.100: [INFO] BookmarksLoadDropped droppedNodes=0
+2026-08-10 08:54:10.100: [INFO] BookmarksSnapshot Startup total=0 bar=0 other=0 mobile=0 showBar=0 showBarNTP=1
+2026-08-10 10:28:51.866: [INFO] BookmarksSnapshot Shutdown total=0 bar=0 other=0 mobile=0 showBar=0 showBarNTP=1
+2026-08-10 10:30:02.209: [INFO] CurrentProfilePath: D:\tool_facebook_chat_page\webview_storage\EBWebView\Default
+2026-08-10 10:30:02.209: [INFO] Profiles total count: 1
+2026-08-10 10:30:02.210: [INFO] Profile: name=Profile 1 path=D:\tool_facebook_chat_page\webview_storage\EBWebView\Default lastActive=2026-08-10T09:27:23.287Z
+2026-08-10 10:30:02.210: [INFO] LastUsedProfileDir: D:\tool_facebook_chat_page\webview_storage\EBWebView\Default
+2026-08-10 10:30:02.210: [INFO] MostRecentlyActiveProfile: name=Profile 1 path=D:\tool_facebook_chat_page\webview_storage\EBWebView\Default lastActive=2026-08-10T09:27:23.287Z
+2026-08-10 10:30:02.210: [INFO] OnDoneLoading sync enabled: 0
+2026-08-10 10:30:02.210: [INFO] BookmarkModelLoaded, ids_reassigned: 0
+2026-08-10 10:30:02.210: [INFO] BookmarksLoadDropped droppedNodes=0
+2026-08-10 10:30:02.210: [INFO] BookmarksSnapshot Startup total=0 bar=0 other=0 mobile=0 showBar=0 showBarNTP=1
+2026-08-10 10:35:19.451: [INFO] BookmarksSnapshot Shutdown total=0 bar=0 other=0 mobile=0 showBar=0 showBarNTP=1
+2026-08-10 10:35:39.065: [INFO] CurrentProfilePath: D:\tool_facebook_chat_page\webview_storage\EBWebView\Default
+2026-08-10 10:35:39.065: [INFO] Profiles total count: 1
+2026-08-10 10:35:39.066: [INFO] Profile: name=Profile 1 path=D:\tool_facebook_chat_page\webview_storage\EBWebView\Default lastActive=2026-08-10T10:35:14.976Z
+2026-08-10 10:35:39.066: [INFO] LastUsedProfileDir: D:\tool_facebook_chat_page\webview_storage\EBWebView\Default
+2026-08-10 10:35:39.066: [INFO] MostRecentlyActiveProfile: name=Profile 1 path=D:\tool_facebook_chat_page\webview_storage\EBWebView\Default lastActive=2026-08-10T10:35:14.976Z
+2026-08-10 10:35:39.066: [INFO] OnDoneLoading sync enabled: 0
+2026-08-10 10:35:39.066: [INFO] BookmarkModelLoaded, ids_reassigned: 0
+2026-08-10 10:35:39.066: [INFO] BookmarksLoadDropped droppedNodes=0
+2026-08-10 10:35:39.066: [INFO] BookmarksSnapshot Startup total=0 bar=0 other=0 mobile=0 showBar=0 showBarNTP=1
+2026-08-10 10:40:38.650: [INFO] BookmarksSnapshot Shutdown total=0 bar=0 other=0 mobile=0 showBar=0 showBarNTP=1
+2026-08-10 10:40:53.845: [INFO] CurrentProfilePath: D:\tool_facebook_chat_page\webview_storage\EBWebView\Default
+2026-08-10 10:40:53.845: [INFO] Profiles total count: 1
+2026-08-10 10:40:53.845: [INFO] Profile: name=Profile 1 path=D:\tool_facebook_chat_page\webview_storage\EBWebView\Default lastActive=2026-08-10T10:39:38.255Z
+2026-08-10 10:40:53.845: [INFO] LastUsedProfileDir: D:\tool_facebook_chat_page\webview_storage\EBWebView\Default
+2026-08-10 10:40:53.845: [INFO] MostRecentlyActiveProfile: name=Profile 1 path=D:\tool_facebook_chat_page\webview_storage\EBWebView\Default lastActive=2026-08-10T10:39:38.255Z
+2026-08-10 10:40:53.845: [INFO] OnDoneLoading sync enabled: 0
+2026-08-10 10:40:53.845: [INFO] BookmarkModelLoaded, ids_reassigned: 0
+2026-08-10 10:40:53.845: [INFO] BookmarksLoadDropped droppedNodes=0
+2026-08-10 10:40:53.845: [INFO] BookmarksSnapshot Startup total=0 bar=0 other=0 mobile=0 showBar=0 showBarNTP=1
+2026-08-11 01:58:28.523: [INFO] CurrentProfilePath: D:\tool_facebook_chat_page\webview_storage\EBWebView\Default
+2026-08-11 01:58:28.523: [INFO] Profiles total count: 1
+2026-08-11 01:58:28.524: [INFO] Profile: name=Profile 1 path=D:\tool_facebook_chat_page\webview_storage\EBWebView\Default lastActive=2026-08-10T10:55:41.347Z
+2026-08-11 01:58:28.524: [INFO] LastUsedProfileDir: D:\tool_facebook_chat_page\webview_storage\EBWebView\Default
+2026-08-11 01:58:28.524: [INFO] MostRecentlyActiveProfile: name=Profile 1 path=D:\tool_facebook_chat_page\webview_storage\EBWebView\Default lastActive=2026-08-10T10:55:41.347Z
+2026-08-11 01:58:28.524: [INFO] OnDoneLoading sync enabled: 0
+2026-08-11 01:58:28.524: [INFO] BookmarkModelLoaded, ids_reassigned: 0
+2026-08-11 01:58:28.524: [INFO] BookmarksLoadDropped droppedNodes=0
+2026-08-11 01:58:28.524: [INFO] BookmarksSnapshot Startup total=0 bar=0 other=0 mobile=0 showBar=0 showBarNTP=1
+2026-08-11 01:59:13.008: [INFO] BookmarksSnapshot Shutdown total=0 bar=0 other=0 mobile=0 showBar=0 showBarNTP=1
+2026-08-11 02:11:53.995: [INFO] CurrentProfilePath: D:\tool_facebook_chat_page\webview_storage\EBWebView\Default
+2026-08-11 02:11:53.995: [INFO] Profiles total count: 1
+2026-08-11 02:11:53.996: [INFO] Profile: name=Profile 1 path=D:\tool_facebook_chat_page\webview_storage\EBWebView\Default lastActive=2026-08-11T01:59:06.191Z
+2026-08-11 02:11:53.996: [INFO] LastUsedProfileDir: D:\tool_facebook_chat_page\webview_storage\EBWebView\Default
+2026-08-11 02:11:53.996: [INFO] MostRecentlyActiveProfile: name=Profile 1 path=D:\tool_facebook_chat_page\webview_storage\EBWebView\Default lastActive=2026-08-11T01:59:06.191Z
+2026-08-11 02:11:53.996: [INFO] OnDoneLoading sync enabled: 0
+2026-08-11 02:11:53.996: [INFO] BookmarkModelLoaded, ids_reassigned: 0
+2026-08-11 02:11:53.996: [INFO] BookmarksLoadDropped droppedNodes=0
+2026-08-11 02:11:53.996: [INFO] BookmarksSnapshot Startup total=0 bar=0 other=0 mobile=0 showBar=0 showBarNTP=1
+2026-08-11 02:57:44.615: [INFO] BookmarksSnapshot Shutdown total=0 bar=0 other=0 mobile=0 showBar=0 showBarNTP=1
+2026-08-11 03:39:30.199: [INFO] CurrentProfilePath: D:\tool_facebook_chat_page\webview_storage\EBWebView\Default
+2026-08-11 03:39:30.199: [INFO] Profiles total count: 1
+2026-08-11 03:39:30.200: [INFO] Profile: name=Profile 1 path=D:\tool_facebook_chat_page\webview_storage\EBWebView\Default lastActive=2026-08-11T02:57:42.433Z
+2026-08-11 03:39:30.200: [INFO] LastUsedProfileDir: D:\tool_facebook_chat_page\webview_storage\EBWebView\Default
+2026-08-11 03:39:30.200: [INFO] MostRecentlyActiveProfile: name=Profile 1 path=D:\tool_facebook_chat_page\webview_storage\EBWebView\Default lastActive=2026-08-11T02:57:42.433Z
+2026-08-11 03:39:30.200: [INFO] OnDoneLoading sync enabled: 0
+2026-08-11 03:39:30.200: [INFO] BookmarkModelLoaded, ids_reassigned: 0
+2026-08-11 03:39:30.200: [INFO] BookmarksLoadDropped droppedNodes=0
+2026-08-11 03:39:30.200: [INFO] BookmarksSnapshot Startup total=0 bar=0 other=0 mobile=0 showBar=0 showBarNTP=1
+2026-08-11 03:43:28.591: [INFO] BookmarksSnapshot Shutdown total=0 bar=0 other=0 mobile=0 showBar=0 showBarNTP=1
+2026-08-11 03:43:59.147: [INFO] CurrentProfilePath: D:\tool_facebook_chat_page\webview_storage\EBWebView\Default
+2026-08-11 03:43:59.147: [INFO] Profiles total count: 1
+2026-08-11 03:43:59.148: [INFO] Profile: name=Profile 1 path=D:\tool_facebook_chat_page\webview_storage\EBWebView\Default lastActive=2026-08-11T03:42:08.109Z
+2026-08-11 03:43:59.148: [INFO] LastUsedProfileDir: D:\tool_facebook_chat_page\webview_storage\EBWebView\Default
+2026-08-11 03:43:59.148: [INFO] MostRecentlyActiveProfile: name=Profile 1 path=D:\tool_facebook_chat_page\webview_storage\EBWebView\Default lastActive=2026-08-11T03:42:08.109Z
+2026-08-11 03:43:59.148: [INFO] OnDoneLoading sync enabled: 0
+2026-08-11 03:43:59.148: [INFO] BookmarkModelLoaded, ids_reassigned: 0
+2026-08-11 03:43:59.148: [INFO] BookmarksLoadDropped droppedNodes=0
+2026-08-11 03:43:59.148: [INFO] BookmarksSnapshot Startup total=0 bar=0 other=0 mobile=0 showBar=0 showBarNTP=1
+2026-08-11 04:22:31.007: [INFO] BookmarksSnapshot Shutdown total=0 bar=0 other=0 mobile=0 showBar=0 showBarNTP=1
+2026-08-11 04:23:04.450: [INFO] CurrentProfilePath: D:\tool_facebook_chat_page\webview_storage\EBWebView\Default
+2026-08-11 04:23:04.450: [INFO] Profiles total count: 1
+2026-08-11 04:23:04.450: [INFO] Profile: name=Profile 1 path=D:\tool_facebook_chat_page\webview_storage\EBWebView\Default lastActive=2026-08-11T04:06:51.200Z
+2026-08-11 04:23:04.450: [INFO] LastUsedProfileDir: D:\tool_facebook_chat_page\webview_storage\EBWebView\Default
+2026-08-11 04:23:04.450: [INFO] MostRecentlyActiveProfile: name=Profile 1 path=D:\tool_facebook_chat_page\webview_storage\EBWebView\Default lastActive=2026-08-11T04:06:51.200Z
+2026-08-11 04:23:04.450: [INFO] OnDoneLoading sync enabled: 0
+2026-08-11 04:23:04.450: [INFO] BookmarkModelLoaded, ids_reassigned: 0
+2026-08-11 04:23:04.450: [INFO] BookmarksLoadDropped droppedNodes=0
+2026-08-11 04:23:04.450: [INFO] BookmarksSnapshot Startup total=0 bar=0 other=0 mobile=0 showBar=0 showBarNTP=1
+2026-08-11 10:11:25.227: [INFO] BookmarksSnapshot Shutdown total=0 bar=0 other=0 mobile=0 showBar=0 showBarNTP=1

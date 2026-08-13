@@ -115,3 +115,10 @@ class CommentReactInput(BaseModel):
     page_id: str
     reaction: str  # LIKE, LOVE, HAHA, WOW, SAD, ANGRY
 
+
+class PushSubscriptionInput(BaseModel):
+    facebook_user_id: str
+    endpoint: str
+    p256dh: str
+    auth: str
+

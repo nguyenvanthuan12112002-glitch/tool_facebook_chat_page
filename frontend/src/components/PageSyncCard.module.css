@@ -3,7 +3,7 @@
   position: fixed;
   inset: 0;
   width: 100vw;
-  height: 100vh;
+  height: 100dvh;
   overflow: hidden;
   background: var(--bg-primary);
   display: flex;
@@ -12,6 +12,8 @@
 
 /* Layout container wrapping the entire dashboard page */
 .container {
+  position: fixed;
+  inset: 0;
   width: 100%;
   height: 100%;
   background: var(--bg-glass);
@@ -35,6 +37,7 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
+  flex-shrink: 0;
 }
 
 .headerTitle {
@@ -53,7 +56,8 @@
 
 /* Three-column Dashboard workspace */
 .dashboardLayout {
-  display: flex;
+  display: grid;
+  grid-template-columns: 2fr 6fr 2fr;
   flex: 1;
   min-height: 0;
   background: rgba(0, 0, 0, 0.25);
@@ -63,9 +67,10 @@
   margin-top: 12px;
 }
 
-/* COLUMN 1: Conversations List */
+/* COLUMN 1: Conversations List -> Now Page List */
 .leftPanel {
-  width: 280px;
+  min-width: 0;
+  min-height: 0;
   border-right: 1px solid var(--border-glass);
   display: flex;
   flex-direction: column;
@@ -96,6 +101,7 @@
 .threadList::-webkit-scrollbar {
   width: 5px;
 }
+
 .threadList::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.1);
   border-radius: 3px;
@@ -208,6 +214,18 @@
   flex-direction: column;
   background: rgba(255, 255, 255, 0.01);
   min-width: 0;
+  min-height: 0;
+}
+
+/* COLUMN 3: Right Panel */
+.rightPanel {
+  min-width: 0;
+  min-height: 0;
+  border-left: 1px solid var(--border-glass);
+  display: flex;
+  flex-direction: column;
+  background: rgba(0, 0, 0, 0.15);
+  flex-shrink: 0;
 }
 
 .chatHeader {
@@ -232,17 +250,18 @@
 }
 
 .chatBody {
-  flex-grow: 1;
-  padding: 20px;
+  flex: 1;
+  padding: 16px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  background: black;
 }
 
 .chatBody::-webkit-scrollbar {
   width: 6px;
 }
+
 .chatBody::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.08);
   border-radius: 3px;
@@ -250,27 +269,26 @@
 
 .bubble {
   max-width: 70%;
-  padding: 10px 14px;
-  border-radius: 16px;
-  font-size: 14px;
+  padding: 8px 14px;
+  border-radius: 18px;
+  font-size: 15px;
   line-height: 1.4;
   word-wrap: break-word;
+  box-sizing: border-box;
 }
 
 .bubbleInbound {
   align-self: flex-start;
-  background: rgba(255, 255, 255, 0.07);
-  color: var(--text-primary);
+  background: #303030;
+  color: white;
   border-bottom-left-radius: 4px;
-  border: 1px solid rgba(255, 255, 255, 0.03);
 }
 
 .bubbleOutbound {
   align-self: flex-end;
-  background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+  /* background: #0084ff; */
   color: white;
   border-bottom-right-radius: 4px;
-  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.2);
 }
 
 .chatFooter {
@@ -300,9 +318,9 @@
   gap: 8px;
 }
 
-/* COLUMN 3: Right Config & Notifications Panel */
+/* COLUMN 3: Right Config & Notifications Panel -> Now Conversations & Notifications */
 .rightPanel {
-  width: 320px;
+  min-width: 0;
   border-left: 1px solid var(--border-glass);
   display: flex;
   flex-direction: column;
@@ -363,6 +381,7 @@
 .rightPanelBody::-webkit-scrollbar {
   width: 5px;
 }
+
 .rightPanelBody::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.1);
   border-radius: 3px;
@@ -500,6 +519,22 @@
   align-items: center;
   justify-content: space-between;
   transition: var(--transition-smooth);
+  cursor: pointer;
+}
+
+.pageCardActive {
+  background: rgba(59, 130, 246, 0.1);
+  border-color: rgba(59, 130, 246, 0.3);
+}
+
+.pageUnreadBadge {
+  background-color: #ef4444;
+  color: white;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 10px;
+  margin-right: 6px;
 }
 
 .pageCard:hover {
@@ -703,8 +738,13 @@
 }
 
 @keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 @keyframes toastIn {
@@ -712,6 +752,7 @@
     transform: translate(-50%, -20px);
     opacity: 0;
   }
+
   to {
     transform: translate(-50%, 0);
     opacity: 1;
@@ -721,10 +762,13 @@
 /* Redesigned Messenger-style Chat Input Bar */
 .messengerInputBar {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  position: relative;
+  /* align-items: flex-end; */
+  gap: 4px;
+  /* padding: 6px 8px; */
+  /* background: black; */
   width: 100%;
+  box-sizing: border-box;
+  max-width: 100vw;
 }
 
 .iconButton {
@@ -732,7 +776,7 @@
   border: none;
   cursor: pointer;
   color: #0084ff;
-  padding: 8px;
+  padding: 4px;
   border-radius: 50%;
   display: flex;
   align-items: center;
@@ -760,14 +804,15 @@
 
 .inputContainer {
   position: relative;
-  flex-grow: 1;
+  flex: 1 1 0;
+  min-width: 0;
   display: flex;
   align-items: center;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid var(--border-glass);
+  background: rgba(255, 255, 255, 0.15);
   border-radius: 20px;
-  padding: 2px 14px;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  padding: 4px 12px;
+  min-height: 36px;
+  box-sizing: border-box;
 }
 
 .inputContainer:focus-within {
@@ -776,14 +821,20 @@
 }
 
 .messengerInput {
+  flex: 1;
+  min-width: 0;
   background: none;
   border: none;
-  color: var(--text-primary);
-  font-family: inherit;
-  font-size: 14px;
-  padding: 8px 36px 8px 4px;
-  width: 100%;
+  color: white;
+  font-size: 15px;
   outline: none;
+  padding: 8px 30px 8px 0;
+  word-break: break-word;
+  resize: none;
+  height: 36px;
+  line-height: 20px;
+  font-family: inherit;
+  overflow-y: auto;
 }
 
 .emojiButton {
@@ -876,13 +927,13 @@
 
 /* Attachments Styling inside Chat Bubbles */
 .attachmentImage {
-  max-width: 280px;
+  max-width: 100%;
   max-height: 220px;
+  object-fit: contain;
   border-radius: 12px;
   border: 1px solid rgba(255, 255, 255, 0.06);
   margin-top: 6px;
   display: block;
-  object-fit: cover;
   transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
   cursor: pointer;
 }
@@ -914,10 +965,13 @@
 }
 
 @keyframes pulse-glow {
-  0%, 100% {
+
+  0%,
+  100% {
     box-shadow: 0 0 5px rgba(239, 68, 68, 0.2);
     border-color: rgba(239, 68, 68, 0.2);
   }
+
   50% {
     box-shadow: 0 0 15px rgba(239, 68, 68, 0.4);
     border-color: rgba(239, 68, 68, 0.5);
@@ -1111,6 +1165,7 @@
     transform: scale(0.92) translateY(5px);
     opacity: 0;
   }
+
   to {
     transform: scale(1) translateY(0);
     opacity: 1;
@@ -1240,6 +1295,7 @@
 
 .fbCommentInputContainer {
   flex-grow: 1;
+  min-width: 0;
   background: rgba(255, 255, 255, 0.05);
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 18px;
@@ -1399,7 +1455,155 @@
 }
 
 
+/* MODAL STYLES */
+.modalOverlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
 
+.modalContent {
+  background: #1e1e24;
+  border: 1px solid var(--border-glass);
+  border-radius: 12px;
+  width: 400px;
+  max-width: 90%;
+  padding: 20px;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
 
+.modalHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 16px;
+  font-weight: 700;
+  color: white;
+  margin-bottom: 8px;
+}
 
+.modalCloseBtn {
+  background: none;
+  border: none;
+  color: #9ca3af;
+  cursor: pointer;
+  font-size: 20px;
+  transition: 0.2s;
+}
 
+.modalCloseBtn:hover {
+  color: white;
+}
+
+/* MOBILE RESPONSIVE */
+@media (max-width: 768px) {
+  .container {
+    padding: 0 !important;
+  }
+
+  .dashboardLayout {
+    display: flex;
+    flex-direction: column;
+    margin-top: 0 !important;
+    border: none !important;
+    border-radius: 0 !important;
+  }
+
+  .leftPanel {
+    display: none !important;
+  }
+
+  .rightPanel,
+  .centerPanel {
+    flex: 1;
+    min-height: 0;
+    width: 100% !important;
+  }
+
+  .mobileHidden {
+    display: none !important;
+  }
+
+  .mobileBackBtn {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    background: rgba(255, 255, 255, 0.1);
+    border: none;
+    color: white;
+    padding: 6px 12px;
+    border-radius: 20px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+    margin-right: 10px;
+  }
+
+  .header {
+    display: none !important;
+  }
+
+  .mobilePageSelectContainer {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    padding: 10px;
+    background: rgba(0, 0, 0, 0.2);
+    border-bottom: 1px solid var(--border-glass);
+  }
+
+  .mobilePageSelect {
+    flex: 1;
+    padding: 8px 12px;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid var(--border-glass);
+    color: white;
+    font-size: 14px;
+    outline: none;
+  }
+
+  .mobilePageSelect option {
+    background: #1e1e2d;
+    color: white;
+  }
+
+  .mobileConfigBtn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--accent-primary);
+    border: none;
+    border-radius: 8px;
+    color: white;
+    padding: 8px;
+    cursor: pointer;
+  }
+
+  .fbToolbarLeftIcons {
+    gap: 4px;
+    flex-wrap: wrap;
+  }
+
+  .fbToolbarLeftIcons::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+@media (min-width: 769px) {
+  .mobileBackBtn {
+    display: none !important;
+  }
+
+  .mobilePageSelectContainer {
+    display: none !important;
+  }
+}

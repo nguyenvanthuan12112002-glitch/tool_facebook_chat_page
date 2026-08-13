@@ -89,7 +89,7 @@ def create_app_window():
     global window
     window = webview.create_window(
         title="Omnichannel Sales Dashboard",
-        url="http://127.0.0.1:8000",
+        url=f"http://127.0.0.1:8000?v={int(time.time())}",
         width=1180,
         height=800,
         resizable=True,
@@ -156,7 +156,15 @@ if __name__ == "__main__":
     # Window lifecycle event loop
     while not exit_program:
         create_app_window()
-        webview.start()
+        
+        # Ensure localStorage and cookies persist between sessions
+        storage_dir = os.path.join(os.path.dirname(__file__), "webview_storage")
+        os.makedirs(storage_dir, exist_ok=True)
+        
+        # Auto-grant microphone and camera permissions for WebView2
+        os.environ['WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS'] = '--auto-accept-camera-and-microphone-capture'
+        
+        webview.start(private_mode=False, storage_path=storage_dir)
         
         # When browser window is closed (click "X"), pywebview returns.
         # If exit_program is False, it means the user only closed the UI but wants the app

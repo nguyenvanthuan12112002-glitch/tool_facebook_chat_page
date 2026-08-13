@@ -13,6 +13,48 @@ try:
 except ImportError:
     win_notifier = None
 
+# Safe import for Web Push (Service Worker)
+try:
+    from pywebpush import webpush, WebPushException
+except ImportError:
+    webpush = None
+
+import json
+
+async def trigger_web_push(db, facebook_user_id: str, title: str, body: str):
+    if not webpush:
+        return
+    
+    from backend.models import PushSubscription
+    subs = db.query(PushSubscription).filter(PushSubscription.facebook_user_id == facebook_user_id).all()
+    if not subs:
+        return
+        
+    payload = json.dumps({"title": title, "body": body})
+    vapid_private_key = os.environ.get("VAPID_PRIVATE_KEY", "RsKKNPMXmx54MxdpTTTLWRV8rsLLidhcwfKE93MFKFQ")
+    if not vapid_private_key:
+        return
+        
+    for sub in subs:
+        sub_info = {
+            "endpoint": sub.endpoint,
+            "keys": {
+                "p256dh": sub.p256dh,
+                "auth": sub.auth
+            }
+        }
+        try:
+            await asyncio.to_thread(
+                webpush,
+                subscription_info=sub_info,
+                data=payload,
+                vapid_private_key=vapid_private_key,
+                vapid_claims={"sub": "mailto:admin@example.com"}
+            )
+        except Exception as e:
+            print(f"[WebPush Error] {e}")
+
+
 # In-memory Async Event Queue
 event_queue = asyncio.Queue()
 
@@ -47,6 +89,29 @@ async def process_webhook_event(event: Dict[str, Any]):
                     att = attachments[0]
                     att_type = att.get("type")
                     att_url = att.get("payload", {}).get("url")
+                    if att_url:
+                        import uuid
+                        import requests
+                        
+                        file_ext = ".bin"
+                        if att_type == "image": file_ext = ".jpg"
+                        elif att_type == "audio": file_ext = ".mp4"
+                        elif att_type == "video": file_ext = ".mp4"
+                        
+                        local_filename = f"fb_incoming_{uuid.uuid4().hex}{file_ext}"
+                        uploads_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../uploads"))
+                        os.makedirs(uploads_dir, exist_ok=True)
+                        local_filepath = os.path.join(uploads_dir, local_filename)
+                        
+                        try:
+                            resp = await asyncio.to_thread(requests.get, att_url, timeout=15)
+                            if resp.status_code == 200:
+                                with open(local_filepath, "wb") as f:
+                                    f.write(resp.content)
+                                att_url = f"/uploads/{local_filename}"
+                        except Exception as e:
+                            print(f"Error downloading incoming attachment: {e}")
+
                     if att_type == "image":
                         text = f"[image] {att_url}"
                     elif att_type == "audio":
@@ -114,6 +179,11 @@ async def process_webhook_event(event: Dict[str, Any]):
                                 )
                             except Exception as ne:
                                 print(f"[Notifier Error] {str(ne)}")
+
+                        # Trigger Service Worker push notification
+                        if direction == "inbound":
+                            msg_preview = text[:50] if text else "[Hình ảnh/Tệp đính kèm]"
+                            await trigger_web_push(db, page_record.facebook_user_id, f"💬 Tin nhắn từ {real_customer_name}", f"{page_record.page_name}: {msg_preview}")
             
             # 2. Parse feed changes (Likes/Comments -> Notifications)
             changes = entry.get("changes", [])
@@ -210,6 +280,9 @@ async def process_webhook_event(event: Dict[str, Any]):
                                         )
                                     except Exception as ne:
                                         print(f"[Notifier Error] {str(ne)}")
+
+                                # Trigger Service Worker push notification
+                                await trigger_web_push(db, page_record.facebook_user_id, f"🔔 Tương tác mới", title)
                                 
     except Exception as e:
         print(f"[Queue Worker] Error parsing webhook item: {str(e)}")
